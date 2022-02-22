@@ -1,22 +1,34 @@
 using System.Text.Json;
+using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
+using Lucene.Net.Store;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OData;
 using Microsoft.Extensions.Options;
 using Microsoft.OData.Edm;
 using Microsoft.OData.ModelBuilder;
+using Directory = Lucene.Net.Store.Directory;
 
 namespace AzureSearchEmulator;
 
 public class Startup
 {
+    public Startup(IConfiguration configuration)
+    {
+        Configuration = configuration;
+    }
+
+    public IConfiguration Configuration { get; }
+
     // This method gets called by the runtime. Use this method to add services to the container.
     // For more information on how to configure your application, visit https://go.microsoft.com/fwlink/?LinkID=398940
     public void ConfigureServices(IServiceCollection services)
     {
         var model = GetEdmModel();
+
+        services.Configure<EmulatorOptions>(Configuration.GetSection("Emulator"));
 
         services.AddControllers()
             .AddJsonOptions(options =>
@@ -41,6 +53,7 @@ public class Startup
         });
 
         services.AddTransient<ISearchIndexRepository, FileSearchIndexRepository>();
+        services.AddSingleton<ISearchIndexer, LuceneNetSearchIndexer>();
     }
 
     // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.

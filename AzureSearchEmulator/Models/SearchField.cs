@@ -11,10 +11,16 @@ public class SearchField
     public string Type { get; set; } = "";
     
     public bool? Searchable { get; set; }
-    
-    public bool? Filterable { get; set; }
-    
-    public bool? Hidden { get; set; }
+
+    public bool Filterable { get; set; } = true;
+
+    public bool Hidden
+    {
+        get => !Retrievable;
+        set => Retrievable = !value;
+    }
+
+    public bool Retrievable { get; set; } = true;
     
     public bool? Sortable { get; set; }
     

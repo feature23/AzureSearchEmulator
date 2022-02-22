@@ -1,6 +1,6 @@
 ﻿using System.Text.Json;
 using AzureSearchEmulator.Models;
-
+using Microsoft.Extensions.Options;
 using static System.IO.File;
 
 namespace AzureSearchEmulator.Repositories;
@@ -8,20 +8,22 @@ namespace AzureSearchEmulator.Repositories;
 public class FileSearchIndexRepository : ISearchIndexRepository
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions;
+    private readonly EmulatorOptions _options;
 
-    public FileSearchIndexRepository(JsonSerializerOptions jsonSerializerOptions)
+    public FileSearchIndexRepository(JsonSerializerOptions jsonSerializerOptions, IOptions<EmulatorOptions> options)
     {
         _jsonSerializerOptions = jsonSerializerOptions;
+        _options = options.Value;
     }
 
     public async IAsyncEnumerable<SearchIndex> GetAll()
     {
-        if (!Directory.Exists(Constants.IndexFolderName))
+        if (!Directory.Exists(_options.IndexesDirectory))
         {
             yield break;
         }
 
-        var files = Directory.GetFiles(Constants.IndexFolderName, "*.index.json");
+        var files = Directory.GetFiles(_options.IndexesDirectory, "*.index.json");
 
         foreach (var file in files)
         {
@@ -32,7 +34,7 @@ public class FileSearchIndexRepository : ISearchIndexRepository
 
     public async Task<SearchIndex?> Get(string key)
     {
-        if (!Directory.Exists(Constants.IndexFolderName))
+        if (!Directory.Exists(_options.IndexesDirectory))
         {
             return null;
         }
@@ -49,9 +51,9 @@ public class FileSearchIndexRepository : ISearchIndexRepository
 
     public async Task Create(SearchIndex index)
     {
-        if (!Directory.Exists(Constants.IndexFolderName))
+        if (!Directory.Exists(_options.IndexesDirectory))
         {
-            Directory.CreateDirectory(Constants.IndexFolderName);
+            Directory.CreateDirectory(_options.IndexesDirectory);
         }
 
         string file = GetIndexFileName(index.Name.ToLowerInvariant());
@@ -66,5 +68,5 @@ public class FileSearchIndexRepository : ISearchIndexRepository
         await WriteAllTextAsync(file, json);
     }
 
-    private static string GetIndexFileName(string key) => Path.Combine(Constants.IndexFolderName, $"{key}.index.json");
+    private string GetIndexFileName(string key) => Path.Combine(_options.IndexesDirectory, $"{key}.index.json");
 }
