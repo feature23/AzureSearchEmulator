@@ -7,13 +7,13 @@ using Microsoft.AspNetCore.OData.Routing.Controllers;
 
 namespace AzureSearchEmulator.Controllers;
 
-public class DocumentsController : ODataController
+public class DocumentIndexingController : ODataController
 {
     private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly ISearchIndexRepository _searchIndexRepository;
     private readonly ISearchIndexer _searchIndexer;
 
-    public DocumentsController(JsonSerializerOptions jsonSerializerOptions,
+    public DocumentIndexingController(JsonSerializerOptions jsonSerializerOptions,
         ISearchIndexRepository searchIndexRepository,
         ISearchIndexer searchIndexer)
     {

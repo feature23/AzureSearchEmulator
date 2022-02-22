@@ -2,14 +2,14 @@ using System.Text.Json;
 using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
-using Lucene.Net.Store;
+using AzureSearchEmulator.SearchData;
+using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OData;
 using Microsoft.Extensions.Options;
 using Microsoft.OData.Edm;
 using Microsoft.OData.ModelBuilder;
-using Directory = Lucene.Net.Store.Directory;
 
 namespace AzureSearchEmulator;
 
@@ -53,6 +53,9 @@ public class Startup
         });
 
         services.AddTransient<ISearchIndexRepository, FileSearchIndexRepository>();
+        services.AddSingleton<ILuceneDirectoryFactory, SimpleFSDirectoryFactory>();
+        services.AddSingleton<ILuceneIndexReaderFactory, LuceneDirectoryReaderFactory>();
+        services.AddTransient<IIndexSearcher, LuceneNetIndexSearcher>();
         services.AddSingleton<ISearchIndexer, LuceneNetSearchIndexer>();
     }
 

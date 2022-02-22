@@ -1,31 +1,27 @@
-﻿using System;
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
+using AzureSearchEmulator.SearchData;
 using Lucene.Net.Analysis.Standard;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
-using Lucene.Net.Store;
 using Lucene.Net.Util;
-using Microsoft.Extensions.Options;
 
 namespace AzureSearchEmulator.Indexing;
 
 public class LuceneNetSearchIndexer : ISearchIndexer
 {
-    private readonly EmulatorOptions _options;
+    private readonly ILuceneDirectoryFactory _luceneDirectoryFactory;
 
-    public LuceneNetSearchIndexer(IOptions<EmulatorOptions> options)
+    public LuceneNetSearchIndexer(ILuceneDirectoryFactory luceneDirectoryFactory)
     {
-        _options = options.Value;
+        _luceneDirectoryFactory = luceneDirectoryFactory;
     }
 
     public Task<IndexDocumentsResult> IndexDocuments(SearchIndex index, IList<IndexDocumentAction> actions, CancellationToken cancellationToken = default)
     {
         var config = new IndexWriterConfig(LuceneVersion.LUCENE_48, new StandardAnalyzer(LuceneVersion.LUCENE_48));
 
-        var path = Path.Join(Path.GetFullPath(_options.IndexesDirectory), index.Name.ToLowerInvariant());
-
-        using var directory = new SimpleFSDirectory(path);
+        using var directory = _luceneDirectoryFactory.GetDirectory(index.Name);
         using var writer = new IndexWriter(directory, config);
 
         var key = index.GetKeyField();
