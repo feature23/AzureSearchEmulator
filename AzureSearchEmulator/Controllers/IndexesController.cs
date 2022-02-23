@@ -67,4 +67,21 @@ public class IndexesController : ODataController
 
         return Created(index);
     }
+
+    [HttpDelete]
+    [Route("indexes({key})")]
+    [Route("indexes/{key}")]
+    public async Task<IActionResult> Delete(string key)
+    {
+        var index = await _searchIndexRepository.Get(key);
+
+        if (index == null)
+        {
+            return NotFound();
+        }
+
+        await _searchIndexRepository.Delete(index);
+
+        return NoContent();
+    }
 }

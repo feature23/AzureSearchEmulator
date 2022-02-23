@@ -56,7 +56,7 @@ public class FileSearchIndexRepository : ISearchIndexRepository
             Directory.CreateDirectory(_options.IndexesDirectory);
         }
 
-        string file = GetIndexFileName(index.Name.ToLowerInvariant());
+        string file = GetIndexFileName(index.Name);
 
         if (Exists(file))
         {
@@ -68,5 +68,33 @@ public class FileSearchIndexRepository : ISearchIndexRepository
         await WriteAllTextAsync(file, json);
     }
 
-    private string GetIndexFileName(string key) => Path.Combine(_options.IndexesDirectory, $"{key}.index.json");
+    public Task<bool> Delete(SearchIndex index)
+    {
+        if (!Directory.Exists(_options.IndexesDirectory))
+        {
+            return Task.FromResult(false);
+        }
+
+        string file = GetIndexFileName(index.Name);
+
+        if (!Exists(file))
+        {
+            return Task.FromResult(false);
+        }
+
+        File.Delete(file);
+
+        string folder = GetIndexFolderName(index.Name);
+
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, true);
+        }
+
+        return Task.FromResult(true);
+    }
+
+    private string GetIndexFileName(string key) => Path.Combine(_options.IndexesDirectory, $"{key.ToLowerInvariant()}.index.json");
+
+    private string GetIndexFolderName(string key) => Path.Combine(_options.IndexesDirectory, key.ToLowerInvariant());
 }

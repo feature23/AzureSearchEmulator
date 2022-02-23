@@ -45,7 +45,7 @@ public class LuceneNetSearchIndexer : ISearchIndexer
                 var fields = from f in index.Fields
                     join v in mergeOrUpload.Item on f.Name equals v.Key
                     where v.Value != null
-                    select CreateField(f, v.Value!);
+                    select CreateField(f, v.Value);
 
                 try
                 {
