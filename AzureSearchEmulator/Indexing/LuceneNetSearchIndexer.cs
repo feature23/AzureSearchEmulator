@@ -1,7 +1,6 @@
 ﻿using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
-using Lucene.Net.Analysis.Standard;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Util;
@@ -19,9 +18,11 @@ public class LuceneNetSearchIndexer : ISearchIndexer
 
     public Task<IndexDocumentsResult> IndexDocuments(SearchIndex index, IList<IndexDocumentAction> actions, CancellationToken cancellationToken = default)
     {
-        var config = new IndexWriterConfig(LuceneVersion.LUCENE_48, new StandardAnalyzer(LuceneVersion.LUCENE_48));
+        var analyzer = AnalyzerHelper.GetPerFieldIndexAnalyzer(index.Fields);
 
-        using var directory = _luceneDirectoryFactory.GetDirectory(index.Name);
+        var config = new IndexWriterConfig(LuceneVersion.LUCENE_48, analyzer);
+
+        var directory = _luceneDirectoryFactory.GetDirectory(index.Name);
         using var writer = new IndexWriter(directory, config);
 
         var key = index.GetKeyField();

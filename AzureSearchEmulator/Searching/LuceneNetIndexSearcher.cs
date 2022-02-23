@@ -1,8 +1,12 @@
 ﻿using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
+using Lucene.Net.Analysis;
 using Lucene.Net.Index;
+using Lucene.Net.QueryParsers.Flexible.Standard;
+using Lucene.Net.QueryParsers.Simple;
 using Lucene.Net.Search;
+using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryConfigHandler.Operator;
 
 namespace AzureSearchEmulator.Searching;
 
@@ -29,6 +33,133 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         }
 
         var doc = searcher.Doc(docs.ScoreDocs[0].Doc);
+        
+        var result = ConvertSearchDoc(index, doc);
+
+        return Task.FromResult<JsonObject?>(result);
+    }
+
+    public Task<int> GetDocCount(SearchIndex index)
+    {
+        var reader = _indexReaderFactory.GetIndexReader(index.Name);
+
+        return Task.FromResult(reader.NumDocs);
+    }
+
+    public Task<SearchResponse> Search(SearchIndex index, SearchRequest request)
+    {
+        var searcher = GetSearcher(index);
+
+        var query = GetQueryFromRequest(index, request);
+
+        Filter? filter = null; // TODO
+        
+        var docs = searcher.Search(query, filter, request.Skip + request.Top); // TODO: support scores?
+
+        var response = new SearchResponse();
+
+        for (var i = request.Skip; i < docs.ScoreDocs.Length; i++)
+        {
+            var scoreDoc = docs.ScoreDocs[i];
+
+            var doc = searcher.Doc(scoreDoc.Doc);
+
+            var result = ConvertSearchDoc(index, doc);
+
+            response.Results.Add(result);
+        }
+
+        if (request.Count)
+        {
+            response.Count = docs.TotalHits;
+        }
+
+        return Task.FromResult(response);
+    }
+
+    private static Query GetQueryFromRequest(SearchIndex index, SearchRequest request)
+    {
+        if (request.Search == null)
+        {
+            return new MatchAllDocsQuery();
+        }
+
+        var firstTextField = index.Fields.FirstOrDefault(i => i.Searchable.GetValueOrDefault());
+
+        if (firstTextField == null)
+        {
+            throw new InvalidOperationException("Unable to search with no searchable fields");
+        }
+
+        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(index.Fields);
+
+        return request.QueryType switch
+        {
+            "full" => ParseFullQuery(request, firstTextField, analyzer),
+            _ => ParseSimpleQuery(index, request, analyzer)
+        };
+    }
+
+    private static Query ParseSimpleQuery(SearchIndex index, SearchRequest request, Analyzer analyzer)
+    {
+        var searchFields = GetSearchFields(index, request.SearchFields);
+
+        var weights = new Dictionary<string, float>(searchFields.Select(i => new KeyValuePair<string, float>(i, 1.0f)));
+
+        var queryParser = new SimpleQueryParser(analyzer, weights)
+        {
+            DefaultOperator = GetDefaultOccur(request.SearchMode),
+        };
+
+        return queryParser.Parse(request.Search);
+    }
+
+    private static Query ParseFullQuery(SearchRequest request, SearchField? firstTextField, Analyzer analyzer)
+    {
+        var queryParser = new StandardQueryParser(analyzer)
+        {
+            DefaultOperator = GetDefaultOperator(request.SearchMode),
+        };
+
+        return queryParser.Parse(request.Search, firstTextField?.Name ?? "Text");
+    }
+
+    private static Operator GetDefaultOperator(string? searchMode)
+    {
+        return searchMode switch
+        {
+            "any" => Operator.OR,
+            "all" => Operator.AND,
+            _ => Operator.OR
+        };
+    }
+
+    private static Occur GetDefaultOccur(string? searchMode)
+    {
+        return searchMode switch
+        {
+            "any" => Occur.SHOULD,
+            "all" => Occur.MUST,
+            _ => Occur.SHOULD
+        };
+    }
+
+    private static IEnumerable<string> GetSearchFields(SearchIndex index, string? searchFields)
+    {
+        if (string.IsNullOrEmpty(searchFields))
+        {
+            return index.Fields.Where(i => i.Searchable.GetValueOrDefault()).Select(i => i.Name);
+        }
+
+        var fields = searchFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        return index.Fields
+            .Where(i => i.Searchable.GetValueOrDefault() && fields.Contains(i.Name, StringComparer.OrdinalIgnoreCase))
+            .Select(i => i.Name);
+    }
+
+    private static JsonObject ConvertSearchDoc(SearchIndex index, Lucene.Net.Documents.Document doc)
+    {
         var result = new JsonObject();
 
         foreach (var field in index.Fields.Where(i => i.Retrievable))
@@ -60,14 +191,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
             }
         }
 
-        return Task.FromResult<JsonObject?>(result);
-    }
-
-    public Task<int> GetDocCount(SearchIndex index)
-    {
-        var reader = _indexReaderFactory.GetIndexReader(index.Name);
-
-        return Task.FromResult(reader.NumDocs);
+        return result;
     }
 
     private IndexSearcher GetSearcher(SearchIndex index)

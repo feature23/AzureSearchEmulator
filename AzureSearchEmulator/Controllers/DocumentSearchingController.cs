@@ -1,4 +1,5 @@
-﻿using AzureSearchEmulator.Repositories;
+﻿using System.Text.Json.Nodes;
+using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OData.Query;
@@ -56,5 +57,84 @@ public class DocumentSearchingController : ODataController
         }
 
         return Ok(doc);
+    }
+
+    [HttpGet]
+    [Route("indexes/{indexKey}/docs")]
+    public async Task<IActionResult> SearchGet(string indexKey, 
+        [FromQuery(Name = "$filter")] string? filter,
+        [FromQuery(Name = "$count")] bool? count,
+        [FromQuery(Name = "$orderby")] string? orderby,
+        [FromQuery(Name = "$select")] string? select,
+        [FromQuery(Name = "$skip")] int? skip,
+        [FromQuery(Name = "$top")] int? top,
+        [FromQuery] SearchRequest searchRequest)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (count != null)
+        {
+            searchRequest.Count = count.Value;
+        }
+
+        if (skip != null)
+        {
+            searchRequest.Skip = skip.Value;
+        }
+
+        if (top != null)
+        {
+            searchRequest.Top = top.Value;
+        }
+
+        searchRequest.Filter ??= filter;
+        searchRequest.Orderby ??= orderby;
+        searchRequest.Select ??= select;
+
+        return await SearchPost(indexKey, searchRequest);
+    }
+
+    [HttpPost]
+    [Route("indexes/{indexKey}/docs/search")]
+    public async Task<IActionResult> SearchPost(string indexKey, [FromBody] SearchRequest request)
+    {
+        if (request.Top is > 1000 or < 0)
+        {
+            ModelState.AddModelError(nameof(request.Top), "Page size must be between 0 and 1000");
+        }
+
+        if (request.Skip is > 100_000 or < 0)
+        {
+            ModelState.AddModelError(nameof(request.Skip), "Skip must be between 0 and 100,000");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var index = await _searchIndexRepository.Get(indexKey);
+
+        if (index == null)
+        {
+            return NotFound();
+        }
+
+        var response = await _indexSearcher.Search(index, request);
+
+        var oDataResponse = new JsonObject
+        {
+            ["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray())
+        };
+
+        if (response.Count != null)
+        {
+            oDataResponse["@odata.count"] = JsonValue.Create(response.Count);
+        }
+
+        return Ok(oDataResponse);
     }
 }
