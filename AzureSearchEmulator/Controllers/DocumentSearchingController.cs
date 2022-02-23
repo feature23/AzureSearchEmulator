@@ -125,15 +125,14 @@ public class DocumentSearchingController : ODataController
 
         var response = await _indexSearcher.Search(index, request);
 
-        var oDataResponse = new JsonObject
-        {
-            ["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray())
-        };
+        var oDataResponse = new JsonObject();
 
         if (response.Count != null)
         {
             oDataResponse["@odata.count"] = JsonValue.Create(response.Count);
         }
+
+        oDataResponse["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray());
 
         return Ok(oDataResponse);
     }

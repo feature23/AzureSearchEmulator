@@ -23,9 +23,16 @@ public class LuceneDirectoryReaderFactory : ILuceneIndexReaderFactory
             return reader;
         }
 
+        reader = RefreshReader(indexName);
+
+        return reader;
+    }
+
+    public IndexReader RefreshReader(string indexName)
+    {
         var directory = _luceneDirectoryFactory.GetDirectory(indexName);
 
-        reader = DirectoryReader.Open(directory);
+        var reader = DirectoryReader.Open(directory);
 
         _indexReaders[indexName] = reader;
 

@@ -25,7 +25,7 @@ public class DocumentIndexingController : ODataController
     [HttpPost]
     [Route("indexes('{indexKey}')/docs/search.index")]
     [Route("indexes/{indexKey}/docs/search.index")]
-    public async Task<IActionResult> IndexDocuments(string indexKey, CancellationToken cancellationToken)
+    public async Task<IActionResult> IndexDocuments(string indexKey)
     {
         var index = await _searchIndexRepository.Get(indexKey);
 
@@ -57,20 +57,17 @@ public class DocumentIndexingController : ODataController
             }
 
             var action = actionNode.GetValue<string>();
-
-            if (action == "mergeOrUpload")
-            {
-                actions.Add(new MergeOrUploadIndexDocumentAction(item));
-            }
-            else
-            {
-                throw new NotImplementedException($"AzureSearchEmulator does not yet support '{action}' actions");
-            }
+            
+            actions.Add(action switch {
+                "mergeOrUpload" => new MergeOrUploadIndexDocumentAction(item),
+                "delete" => new DeleteIndexDocumentAction(item),
+                _ => throw new NotImplementedException($"Emulator does not yet support '{action}' actions")
+            });
 
             itemIndex++;
         }
 
-        var result = await _searchIndexer.IndexDocuments(index, actions, cancellationToken);
+        var result = _searchIndexer.IndexDocuments(index, actions);
 
         return StatusCode(result.Value.Any(i => !i.Status) ? 207 : 200, result);
     }

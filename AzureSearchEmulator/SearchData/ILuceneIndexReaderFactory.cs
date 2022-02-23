@@ -5,4 +5,6 @@ namespace AzureSearchEmulator.SearchData;
 public interface ILuceneIndexReaderFactory
 {
     IndexReader GetIndexReader(string indexName);
+
+    IndexReader RefreshReader(string indexName);
 }
