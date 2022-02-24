@@ -1,30 +1,19 @@
 ﻿using System.Text.Json.Nodes;
-using AzureSearchEmulator.Models;
-using Lucene.Net.Index;
 
 namespace AzureSearchEmulator.Indexing;
 
 public class DeleteIndexDocumentAction : IndexDocumentAction
 {
     public DeleteIndexDocumentAction(JsonObject item)
+        : base(item)
     {
-        Item = item;
     }
-
-    public JsonObject Item { get; }
     
-    public override IndexingResult PerformIndexingAsync(SearchIndex index, SearchField key, IndexWriter writer)
+    public override IndexingResult PerformIndexingAsync(IndexingContext context)
     {
-        var keyNode = Item[key.Name];
+        var keyTerm = GetKeyTerm(context.Key);
 
-        if (keyNode == null)
-        {
-            throw new InvalidOperationException($"Key value for key '{key.Name}' not found");
-        }
-
-        var keyTerm = new Term(key.Name, keyNode.GetValue<string>());
-
-        writer.DeleteDocuments(keyTerm);
+        context.Writer.DeleteDocuments(keyTerm);
 
         return new IndexingResult(keyTerm.Text, true, 200);
     }

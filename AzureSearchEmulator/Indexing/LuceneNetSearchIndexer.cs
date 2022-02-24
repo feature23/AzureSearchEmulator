@@ -29,10 +29,21 @@ public class LuceneNetSearchIndexer : ISearchIndexer
 
         var results = new IndexDocumentsResult();
 
+        // ReSharper disable once AccessToDisposedClosure
+        var readerLazy = new Lazy<IndexReader>(() => writer.GetReader(true));
+
+        var context = new IndexingContext(index, key, writer, readerLazy);
+
         foreach (var action in actions)
         {
-            var result = action.PerformIndexingAsync(index, key, writer);
+            var result = action.PerformIndexingAsync(context);
             results.Value.Add(result);
+        }
+
+        if (readerLazy.IsValueCreated)
+        {
+            var reader = readerLazy.Value;
+            reader.Dispose();
         }
 
         writer.Commit();

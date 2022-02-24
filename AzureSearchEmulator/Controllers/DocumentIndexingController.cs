@@ -59,6 +59,8 @@ public class DocumentIndexingController : ODataController
             var action = actionNode.GetValue<string>();
             
             actions.Add(action switch {
+                "upload" => new UploadIndexDocumentAction(item),
+                "merge" => new MergeIndexDocumentAction(item),
                 "mergeOrUpload" => new MergeOrUploadIndexDocumentAction(item),
                 "delete" => new DeleteIndexDocumentAction(item),
                 _ => throw new NotImplementedException($"Emulator does not yet support '{action}' actions")
