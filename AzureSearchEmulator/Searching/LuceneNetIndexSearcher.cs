@@ -6,6 +6,7 @@ using Lucene.Net.Index;
 using Lucene.Net.QueryParsers.Flexible.Standard;
 using Lucene.Net.QueryParsers.Simple;
 using Lucene.Net.Search;
+using Microsoft.OData.UriParser;
 using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryConfigHandler.Operator;
 
 namespace AzureSearchEmulator.Searching;
@@ -52,7 +53,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
         var query = GetQueryFromRequest(index, request);
 
-        Filter? filter = null; // TODO
+        var filter = GetFilterFromRequest(request);
         
         var docs = searcher.Search(query, filter, request.Skip + request.Top); // TODO: support scores?
 
@@ -75,6 +76,26 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         }
 
         return Task.FromResult(response);
+    }
+
+    private static Filter? GetFilterFromRequest(SearchRequest request)
+    {
+        if (string.IsNullOrEmpty(request.Filter))
+        {
+            return null;
+        }
+
+        var parser = new UriQueryExpressionParser(100);
+        var filterQuery = parser.ParseFilter(request.Filter);
+
+        if (filterQuery == null)
+        {
+            return null;
+        }
+
+        var query = filterQuery.Accept(new ODataQueryVisitor());
+
+        return new QueryWrapperFilter(query);
     }
 
     private static Query GetQueryFromRequest(SearchIndex index, SearchRequest request)
