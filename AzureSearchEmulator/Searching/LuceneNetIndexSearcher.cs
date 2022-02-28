@@ -19,7 +19,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
     {
         _indexReaderFactory = indexReaderFactory;
     }
-    
+
     public Task<JsonObject?> GetDoc(SearchIndex index, string key)
     {
         var searcher = GetSearcher(index);
@@ -34,7 +34,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         }
 
         var doc = searcher.Doc(docs.ScoreDocs[0].Doc);
-        
+
         var result = ConvertSearchDoc(index, doc);
 
         return Task.FromResult<JsonObject?>(result);
@@ -54,8 +54,10 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         var query = GetQueryFromRequest(index, request);
 
         var filter = GetFilterFromRequest(request);
-        
-        var docs = searcher.Search(query, filter, request.Skip + request.Top); // TODO: support scores?
+
+        var sort = GetSortFromRequest(index, request);
+
+        var docs = searcher.Search(query, filter, request.Skip + request.Top, sort); // TODO: support scores?
 
         var response = new SearchResponse();
 
@@ -76,6 +78,86 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         }
 
         return Task.FromResult(response);
+    }
+
+    private static Sort GetSortFromRequest(SearchIndex index, SearchRequest request)
+    {
+        if (string.IsNullOrEmpty(request.Orderby))
+        {
+            return Sort.RELEVANCE;
+        }
+
+        // NOTE: the ASP.NET OData stuff for parsing $orderby is unfortunately internal.
+        // TODO: Replace this with a better parser, maybe with ANTLR?
+        var parts = request.Orderby.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (parts.Length == 0)
+        {
+            return Sort.RELEVANCE;
+        }
+
+        if (parts.Length > 32)
+        {
+            throw new InvalidOperationException("There is a limit of 32 clauses for $orderby");
+        }
+
+        var fields = new SortField[parts.Length];
+
+        for (int i = 0; i < parts.Length; i++)
+        {
+            fields[i] = GetSortField(index, parts[i]);
+        }
+
+        return new Sort(fields);
+    }
+
+    private static SortField GetSortField(SearchIndex index, string sort)
+    {
+        var sortParts = sort.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (sortParts.Length is 0 or > 2)
+        {
+            // 0 case should not happen, code that calls this removes empty entries. Could happen with multiple spaces.
+            throw new InvalidOperationException("Unable to parse $orderby field expression");
+        }
+
+        bool descending = sortParts.Length == 2 && sortParts[1].Equals("desc", StringComparison.OrdinalIgnoreCase);
+
+        // TODO: support geospatial distance sorting
+        string fieldName = sortParts[0];
+
+        var field = index.Fields.FirstOrDefault(i => i.Name.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
+
+        if (field == null)
+        {
+            throw new InvalidOperationException($"Unable to find field '{fieldName}' in the index '{index.Name}'");
+        }
+
+        return new SortField(field.Name, GetSortFieldType(field), descending);
+    }
+
+    private static SortFieldType GetSortFieldType(SearchField field)
+    {
+        return field.Type switch
+        {
+            "Edm.String" => SortFieldType.STRING,
+            "Edm.Int32" => SortFieldType.INT32,
+            "Edm.Int64" => SortFieldType.INT64,
+            "Edm.Double" => SortFieldType.DOUBLE,
+            "Edm.Boolean" => SortFieldType.INT32,
+            "Edm.DateTimeOffset" => throw new NotImplementedException(),
+            "Edm.GeographyPoint" => throw new NotImplementedException(),
+            "Edm.ComplexType" => throw new NotImplementedException(),
+            "Collection(Edm.String)" => throw new NotImplementedException(),
+            "Collection(Edm.Int32)" => throw new NotImplementedException(),
+            "Collection(Edm.Int64)" => throw new NotImplementedException(),
+            "Collection(Edm.Double)" => throw new NotImplementedException(),
+            "Collection(Edm.Boolean)" => throw new NotImplementedException(),
+            "Collection(Edm.DateTimeOffset)" => throw new NotImplementedException(),
+            "Collection(Edm.GeographyPoint)" => throw new NotImplementedException(),
+            "Collection(Edm.ComplexType)" => throw new NotImplementedException(),
+            _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
+        };
     }
 
     private static Filter? GetFilterFromRequest(SearchRequest request)
