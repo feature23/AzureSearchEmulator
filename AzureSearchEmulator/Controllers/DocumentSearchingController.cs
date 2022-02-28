@@ -99,6 +99,8 @@ public class DocumentSearchingController : ODataController
 
     [HttpPost]
     [Route("indexes/{indexKey}/docs/search")]
+    [Route("indexes('{indexKey}')/docs/search")]
+    [Route("indexes('{indexKey}')/docs/search.post.search")]
     public async Task<IActionResult> SearchPost(string indexKey, [FromBody] SearchRequest request)
     {
         if (request.Top is > 1000 or < 0)

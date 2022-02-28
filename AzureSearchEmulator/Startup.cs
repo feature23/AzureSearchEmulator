@@ -37,7 +37,7 @@ public class Startup
                 options.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
             })
             .AddOData(options =>
-                options.Count().Filter().Expand().Select().OrderBy().SetMaxTop(5)
+                options.Count().Filter().Expand().Select().OrderBy().SetMaxTop(1000)
                     .AddRouteComponents("", model));
 
         services.AddTransient(sp =>
