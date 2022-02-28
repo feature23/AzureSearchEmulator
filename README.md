@@ -1,4 +1,6 @@
 # Azure Search Emulator
+[![.NET](https://github.com/feature23/AzureSearchEmulator/actions/workflows/dotnet.yml/badge.svg)](https://github.com/feature23/AzureSearchEmulator/actions/workflows/dotnet.yml)
+
 A local emulator for Azure (Cognitive) Search Service.
 
 This project is currently a prototype, with work underway to validate it in various real-world scenarios 
