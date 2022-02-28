@@ -94,7 +94,15 @@ public class FileSearchIndexRepository : ISearchIndexRepository
         return Task.FromResult(true);
     }
 
-    private string GetIndexFileName(string key) => Path.Combine(_options.IndexesDirectory, $"{key.ToLowerInvariant()}.index.json");
+    private string GetIndexFileName(string key)
+    {
+        if (key.Contains('.') || key.Contains('/') || key.Contains('\\'))
+        {
+            throw new ArgumentException("Index file name cannot contain any of the following characters: . \\ /");
+        }
+
+        return Path.Combine(_options.IndexesDirectory, $"{key.ToLowerInvariant()}.index.json");
+    }
 
     private string GetIndexFolderName(string key) => Path.Combine(_options.IndexesDirectory, key.ToLowerInvariant());
 }
