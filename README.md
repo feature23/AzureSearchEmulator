@@ -41,6 +41,7 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `$skip`
   * `$top`
   * `$filter`
+  * `$orderby`
   * `search`
   * `queryType`
   * `searchFields`
