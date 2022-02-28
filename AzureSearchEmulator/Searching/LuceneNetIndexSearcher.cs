@@ -57,7 +57,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
         var sort = GetSortFromRequest(index, request);
 
-        var docs = searcher.Search(query, filter, request.Skip + request.Top, sort); // TODO: support scores?
+        var docs = searcher.Search(query, filter, request.Skip + request.Top, sort, true, true);
 
         var response = new SearchResponse();
 
@@ -68,6 +68,8 @@ public class LuceneNetIndexSearcher : IIndexSearcher
             var doc = searcher.Doc(scoreDoc.Doc);
 
             var result = ConvertSearchDoc(index, doc);
+
+            result["@search.score"] = scoreDoc.Score;
 
             response.Results.Add(result);
         }
