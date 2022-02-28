@@ -35,17 +35,20 @@ Currently, there is support (to varying degrees) for the following Azure Search 
 * Delete an index
 * Bulk document indexing and deletion (merge, upload, mergeOrUpload, delete)
 * Retrieve an individual document
-* Get `$count` of all documents
+* Get `$count` of all documents in an index
 * Search with support for the following parameters: 
-  * `$count`
-  * `$skip`
-  * `$top`
-  * `$filter`
-  * `$orderby`
-  * `search`
-  * `queryType`
-  * `searchFields`
-  * `searchMode`
+  * `$count` - include a count of document matches
+  * `$skip` - paging; skip X records, defaults to 0
+  * `$top` - paging; take next X records, defaults to 50
+  * `$filter` - OData filter expression to limit results, i.e. `(Type eq 'Comment') or (Type eq 'File')`
+  * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`
+  * `highlight` - Comma-delimited list of fields to highlight, supports optional max highlight count i.e. `Body-10,Title-5`
+  * `highlightPreTag` - Start tag to wrap highlighted result text, defaults to `<em>`
+  * `highlightPostTag` - End tag to wrap highlighted result text, defaults to `</em>`
+  * `queryType` - The type of query parser to use, either `simple` (default) or `full`
+  * `search` - The actual search query text to pass to the query parser
+  * `searchFields` - Comma-delimited list of fields to search
+  * `searchMode` - The default boolean operator, either `any` (default) or `all`
 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.

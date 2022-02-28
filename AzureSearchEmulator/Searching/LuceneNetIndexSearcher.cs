@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Nodes;
+﻿using System.Text.Json;
+using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
 using Lucene.Net.Analysis;
@@ -57,6 +58,8 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
         var sort = GetSortFromRequest(index, request);
 
+        var highlighter = GetHighlighterFromRequest(index, request, query);
+
         var docs = searcher.Search(query, filter, request.Skip + request.Top, sort, true, true);
 
         var response = new SearchResponse();
@@ -71,6 +74,12 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
             result["@search.score"] = scoreDoc.Score;
 
+            if (highlighter != null)
+            {
+                var highlights = highlighter.GetHighlights(searcher.IndexReader, scoreDoc.Doc, doc);
+                result["@search.highlights"] = JsonSerializer.SerializeToNode(highlights);
+            }
+
             response.Results.Add(result);
         }
 
@@ -80,6 +89,42 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         }
 
         return Task.FromResult(response);
+    }
+
+    private static HitHighlighter? GetHighlighterFromRequest(SearchIndex index, SearchRequest request, Query query)
+    {
+        if (string.IsNullOrEmpty(request.Highlight))
+        {
+            return null;
+        }
+
+        var fields = request.Highlight.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var highlightFields = new List<HighlightField>(fields.Length);
+
+        foreach (var field in fields)
+        {
+            var fieldParts = field.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            int maxHighlights = 5;
+
+            var indexField = index.Fields.FirstOrDefault(i => i.Name.Equals(fieldParts[0], StringComparison.OrdinalIgnoreCase));
+
+            if (indexField == null)
+            {
+                throw new InvalidOperationException($"Unable to find field '{fieldParts[0]}' in the index '{index.Name}'");
+            }
+
+            if (fieldParts.Length == 2)
+            {
+                if (!int.TryParse(fieldParts[1], out maxHighlights))
+                {
+                    throw new InvalidOperationException($"Unable to parse max highlights expression as int");
+                }
+            }
+
+            highlightFields.Add(new HighlightField(indexField, maxHighlights));
+        }
+
+        return new HitHighlighter(query, request.HighlightPreTag ?? "<em>", request.HighlightPostTag ?? "</em>", highlightFields);
     }
 
     private static Sort GetSortFromRequest(SearchIndex index, SearchRequest request)
