@@ -8,7 +8,7 @@ to ensure that it accurately emulates Azure Search as best as possible.
 
 ## Quick Start
 
-1. Clone the repo
+1. Clone the repo.
 2. Open AzureSearchEmulator.sln in Visual Studio 2022 and run it, 
 or cd to the `AzureSearchEmulator` folder and run `dotnet run` from the command-line.
 
@@ -23,7 +23,7 @@ fit for your needs, depending on what you're trying to do. Compared to that proj
 
 * Has no external service/runtime dependencies beyond .NET 6
 * Can be run and debugged simply with F5 in Visual Studio, or `dotnet run` on the command line
-* Does not require Docker or any kind of containers/virtualization
+* Does not require Docker or any kind of containers/virtualization, but can be run with Docker if you prefer (see below)
 * Does not require Solr (or Java), Docker Compose, or any kind of orchestration
 * Supports index management APIs (creation and deletion at this time)
 
@@ -53,6 +53,35 @@ Currently, there is support (to varying degrees) for the following Azure Search 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.
 This uses the SimpleFSDirectory Lucene.net directory class to manage its data.
+
+## Authentication
+
+Authentication is not yet implemented. If you're using the Azure Search SDK, you can provide any value for the `AzureKeyCredential` constructor parameter.
+
+## Building and Running with Docker
+
+It is not required to use Docker to run this project, see the Quick Start section above. 
+
+The easiest way to run with Docker is to use Docker Compose. Run the following from the repo root:
+
+```bash
+docker compose up -d
+```
+
+This will build the image, create the volume, and run the container in the background at https://localhost:5081 and http://localhost:5080. See the `docker-compose.yml` file for how this works.
+
+If you prefer to do this without Docker Compose (HTTP only):
+
+```bash
+# create a volume to persist your indexes across runs
+docker volume create az-search-emu
+
+# from repo root
+docker build . -t azure-search-emulator
+
+# run the container on port 5080 (feel free to change) and mount the volume
+docker run -dp 5080:80 -v az-search-emu:/app/indexes azure-search-emulator
+```
 
 ## License
 

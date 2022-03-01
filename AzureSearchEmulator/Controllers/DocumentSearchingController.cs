@@ -68,6 +68,7 @@ public class DocumentSearchingController : ODataController
         [FromQuery(Name = "$select")] string? select,
         [FromQuery(Name = "$skip")] int? skip,
         [FromQuery(Name = "$top")] int? top,
+        [FromQuery(Name = "facet")] IList<string>? facet,
         [FromQuery] SearchRequest searchRequest)
     {
         if (!ModelState.IsValid)
@@ -93,6 +94,7 @@ public class DocumentSearchingController : ODataController
         searchRequest.Filter ??= filter;
         searchRequest.Orderby ??= orderby;
         searchRequest.Select ??= select;
+        searchRequest.Facets ??= facet;
 
         return await SearchPost(indexKey, searchRequest);
     }

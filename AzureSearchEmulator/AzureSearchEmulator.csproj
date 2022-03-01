@@ -24,4 +24,10 @@
 	  <Folder Include="indexes\" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <None Update="aspnetapp.pfx">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	</ItemGroup>
+
 </Project>
