@@ -19,7 +19,7 @@ public static class SearchFieldExtensions
             "Edm.Int64" => new Int64Field(field.Name, value.GetValue<long>(), stored),
             "Edm.Double" => new DoubleField(field.Name, value.GetValue<double>(), stored),
             "Edm.Boolean" => new Int32Field(field.Name, value.GetValue<bool>() ? 1 : 0, stored),
-            "Edm.DateTimeOffset" => throw new NotImplementedException(),
+            "Edm.DateTimeOffset" => new Int64Field(field.Name, value.GetValue<DateTimeOffset>().ToUnixTimeMilliseconds(), stored),
             "Edm.GeographyPoint" => throw new NotImplementedException(),
             "Edm.ComplexType" => throw new NotImplementedException(),
             "Collection(Edm.String)" => throw new NotImplementedException(),
