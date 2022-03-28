@@ -26,6 +26,10 @@ public class HitHighlighter
         foreach (var (field, maxHighlights) in Fields)
         {
             var text = doc.Get(field.Name);
+
+            if (string.IsNullOrEmpty(text))
+                continue;
+
             var tokenStream = TokenSources.GetAnyTokenStream(reader, docId, field.Name, doc, AnalyzerHelper.GetAnalyzer(field.SearchAnalyzer ?? field.Analyzer));
             var textFragments = _highlighter.GetBestTextFragments(tokenStream, text, false, maxHighlights);
 

@@ -35,12 +35,10 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
             };
         }
 
-        if (tokenIn.Left is EndPathToken endPathToken
+        if (tokenIn.Left is EndPathToken { Identifier: string path }
             && tokenIn.OperatorKind == BinaryOperatorKind.Equal
-            && tokenIn.Right is LiteralToken { Value: {} } literalToken)
+            && tokenIn.Right is LiteralToken literalToken)
         {
-            string path = endPathToken.Identifier;
-
             return literalToken.Value switch
             {
                 string stringValue => new TermQuery(new Term(path, stringValue)),
@@ -73,6 +71,30 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
 
     public Query Visit(InToken tokenIn)
     {
+        if (tokenIn.Left is EndPathToken { Identifier: string path }
+            && tokenIn.Right is LiteralToken { Value: string valueString })
+        {
+            valueString = valueString.TrimStart('(').TrimEnd(')');
+
+            var values = valueString.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var query = new BooleanQuery();
+
+            foreach (var value in values)
+            {
+                if (value.StartsWith('\'') || value.StartsWith('\"'))
+                {
+                    query.Add(new TermQuery(new Term(path, value.Trim('\'', '\"'))), Occur.MUST);
+                }
+                else
+                {
+                    throw new NotImplementedException("Support for non-string IN lists not yet implemented");
+                }
+            }
+
+            return query;
+        }
+
         throw new NotImplementedException();
     }
 
