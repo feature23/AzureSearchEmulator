@@ -54,6 +54,14 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
         var query = GetQueryFromRequest(index, request);
 
+        if (query == null)
+        {
+            return Task.FromResult(new SearchResponse
+            {
+                Count = 0,
+            });
+        }
+
         var filter = GetFilterFromRequest(request);
 
         var sort = GetSortFromRequest(index, request);
@@ -227,7 +235,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         return new QueryWrapperFilter(query);
     }
 
-    private static Query GetQueryFromRequest(SearchIndex index, SearchRequest request)
+    private static Query? GetQueryFromRequest(SearchIndex index, SearchRequest request)
     {
         if (request.Search == null)
         {
@@ -250,7 +258,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         };
     }
 
-    private static Query ParseSimpleQuery(SearchIndex index, SearchRequest request, Analyzer analyzer)
+    private static Query? ParseSimpleQuery(SearchIndex index, SearchRequest request, Analyzer analyzer)
     {
         var searchFields = GetSearchFields(index, request.SearchFields);
 
@@ -264,7 +272,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
         return queryParser.Parse(request.Search);
     }
 
-    private static Query ParseFullQuery(SearchRequest request, SearchField? firstTextField, Analyzer analyzer)
+    private static Query? ParseFullQuery(SearchRequest request, SearchField? firstTextField, Analyzer analyzer)
     {
         var queryParser = new StandardQueryParser(analyzer)
         {
