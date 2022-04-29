@@ -84,7 +84,7 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
             {
                 if (value.StartsWith('\'') || value.StartsWith('\"'))
                 {
-                    query.Add(new TermQuery(new Term(path, value.Trim('\'', '\"'))), Occur.MUST);
+                    query.Add(new TermQuery(new Term(path, value.Trim('\'', '\"'))), Occur.SHOULD);
                 }
                 else
                 {
@@ -115,7 +115,55 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
 
     public Query Visit(FunctionCallToken tokenIn)
     {
-        throw new NotImplementedException();
+        if (tokenIn.Name == "search.in")
+        {
+            return VisitSearchIn(tokenIn);
+        }
+
+        throw new NotImplementedException($"Function {tokenIn.Name} not implemented");
+    }
+
+    private static Query VisitSearchIn(FunctionCallToken tokenIn)
+    {
+        var args = tokenIn.Arguments.ToList();
+
+        if (args.Count is < 2 or > 3)
+        {
+            throw new ArgumentException("search.in requires two or three arguments");
+        }
+
+        if (args[0].ValueToken is not EndPathToken { Identifier: string path })
+        {
+            throw new NotImplementedException("Passing anything other than an end path as the first parameter to search.in is not yet implemented");
+        }
+
+        if (args[1].ValueToken is not LiteralToken { Value: string inList })
+        {
+            throw new NotImplementedException("Passing anything other than a string as the second parameter to search.in is not yet implemented");
+        }
+
+        var delimiters = new[] { ',', ' ' };
+
+        if (args.Count == 3)
+        {
+            if (args[2].ValueToken is not LiteralToken { Value: string delimiterString })
+            {
+                throw new NotImplementedException("Passing anything other than a string as the third parameter to search.in is not yet implemented");
+            }
+
+            delimiters = delimiterString.ToCharArray();
+        }
+
+        var values = inList.Split(delimiters);
+
+        var query = new BooleanQuery();
+
+        foreach (var value in values)
+        {
+            query.Add(new TermQuery(new Term(path, value)), Occur.SHOULD);
+        }
+
+        return query;
     }
 
     public Query Visit(LambdaToken tokenIn)
