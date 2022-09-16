@@ -35,10 +35,10 @@ public abstract class UpsertIndexDocumentActionBase : IndexDocumentAction
 
     protected IEnumerable<IIndexableField> GetDocFields(SearchIndex index)
     {
-        return from f in index.Fields
-            join v in Item on f.Name equals v.Key
-            where v.Value != null
-            select f.CreateField(v.Value);
+        return (from f in index.Fields
+                join v in Item on f.Name equals v.Key
+                where v.Value != null
+                select f.CreateField(v.Value)).SelectMany(f => f);
     }
 
     protected void MergeDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields, bool uploadIfMissing)

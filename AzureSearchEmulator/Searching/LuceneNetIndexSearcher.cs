@@ -322,26 +322,62 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
         foreach (var field in index.Fields.Where(i => i.Retrievable))
         {
-            var docField = doc.GetField(field.Name);
+            // var docField = doc.GetField(field.Name);
+            var docFields = doc.GetFields(field.Name);
 
-            if (docField != null)
+            if (docFields.Length == 1)
             {
+                var docField = docFields.Single();
+                
                 result[field.Name] = field.Type switch
                 {
                     "Edm.String" => docField.GetStringValue(),
                     "Edm.Int32" => docField.GetInt32Value(),
                     "Edm.Int64" => docField.GetInt64Value(),
                     "Edm.Double" => docField.GetDoubleValue(),
-                    "Edm.Boolean" => docField.GetInt32Value() is int i ? i != 0 : null,
-                    "Edm.DateTimeOffset" => docField.GetInt64Value() is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null,
+                    "Edm.Boolean" => docField.GetInt32Value() is { } i ? i != 0 : null,
+                    "Edm.DateTimeOffset" => docField.GetInt64Value() is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null,
                     "Edm.GeographyPoint" => throw new NotImplementedException(),
                     "Edm.ComplexType" => throw new NotImplementedException(),
-                    "Collection(Edm.String)" => throw new NotImplementedException(),
-                    "Collection(Edm.Int32)" => throw new NotImplementedException(),
-                    "Collection(Edm.Int64)" => throw new NotImplementedException(),
-                    "Collection(Edm.Double)" => throw new NotImplementedException(),
-                    "Collection(Edm.Boolean)" => throw new NotImplementedException(),
-                    "Collection(Edm.DateTimeOffset)" => throw new NotImplementedException(),
+                    "Collection(Edm.String)" => new JsonArray(docField.GetStringValue()),
+                    "Collection(Edm.Int32)" => new JsonArray(docField.GetInt32Value()),
+                    "Collection(Edm.Int64)" => new JsonArray(docField.GetInt64Value()),
+                    "Collection(Edm.Double)" => new JsonArray(docField.GetDoubleValue()),
+                    "Collection(Edm.Boolean)" => new JsonArray(docField.GetInt32Value() is { } i ? i != 0 : null),
+                    "Collection(Edm.DateTimeOffset)" => new JsonArray(docField.GetInt64Value() is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null),
+                    "Collection(Edm.GeographyPoint)" => throw new NotImplementedException(),
+                    "Collection(Edm.ComplexType)" => throw new NotImplementedException(),
+                    _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
+                };
+            }
+            else
+            {
+                result[field.Name] = field.Type switch
+                {
+                    "Collection(Edm.String)" => new JsonArray(docFields
+                        .Select(f => JsonValue.Create(f.GetStringValue()))
+                        .OfType<JsonNode>()
+                        .ToArray()),
+                    "Collection(Edm.Int32)" => new JsonArray(docFields
+                        .Select(f => JsonValue.Create(f.GetInt32Value()))
+                        .OfType<JsonNode>()
+                        .ToArray()),
+                    "Collection(Edm.Int64)" => new JsonArray(docFields
+                        .Select(f => JsonValue.Create(f.GetInt64Value()))
+                        .OfType<JsonNode>()
+                        .ToArray()),
+                    "Collection(Edm.Double)" => new JsonArray(docFields
+                        .Select(f => JsonValue.Create(f.GetDoubleValue()))
+                        .OfType<JsonNode>()
+                        .ToArray()),
+                    "Collection(Edm.Boolean)" => new JsonArray(docFields
+                        .Select(f => JsonValue.Create(f.GetInt32Value() is {} i ? i != 0 : null))
+                        .OfType<JsonNode>()
+                        .ToArray()),
+                    "Collection(Edm.DateTimeOffset)" => new JsonArray(docFields
+                        .Select(f => JsonValue.Create(f.GetInt64Value() is { } ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null))
+                        .OfType<JsonNode>()
+                        .ToArray()),
                     "Collection(Edm.GeographyPoint)" => throw new NotImplementedException(),
                     "Collection(Edm.ComplexType)" => throw new NotImplementedException(),
                     _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")

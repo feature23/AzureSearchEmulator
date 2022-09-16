@@ -22,9 +22,11 @@ public class IndexesController : ODataController
     [HttpGet]
     [EnableQuery]
     [Route("indexes")]
-    public IAsyncEnumerable<SearchIndex> Get()
+    public IEnumerable<SearchIndex> Get()
     {
-        return _searchIndexRepository.GetAll();
+        var enumerable = _searchIndexRepository.GetAll();
+
+        return enumerable;
     }
 
     [HttpGet]

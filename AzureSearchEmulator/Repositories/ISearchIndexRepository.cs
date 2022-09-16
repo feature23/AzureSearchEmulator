@@ -4,7 +4,7 @@ namespace AzureSearchEmulator.Repositories;
 
 public interface ISearchIndexRepository
 {
-    IAsyncEnumerable<SearchIndex> GetAll();
+    IEnumerable<SearchIndex> GetAll();
 
     Task<SearchIndex?> Get(string key);
 

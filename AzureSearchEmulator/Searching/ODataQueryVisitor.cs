@@ -14,6 +14,19 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
 
     public Query Visit(AnyToken tokenIn)
     {
+        if (tokenIn.Parent is InnerPathToken parentInnerPathToken
+            && tokenIn.Expression is BinaryOperatorToken binaryOperatorToken
+            && binaryOperatorToken.OperatorKind == BinaryOperatorKind.Equal
+            && binaryOperatorToken.Right is LiteralToken literalToken)
+        {
+            var identifier = parentInnerPathToken.Identifier;
+
+            return literalToken.Value switch
+            {
+                string stringValue => new TermQuery(new Term(identifier, stringValue)),
+                _ => throw new NotImplementedException()
+            };
+        }
         throw new NotImplementedException();
     }
 

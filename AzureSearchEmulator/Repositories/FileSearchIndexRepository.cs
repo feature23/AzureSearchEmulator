@@ -16,7 +16,7 @@ public class FileSearchIndexRepository : ISearchIndexRepository
         _options = options.Value;
     }
 
-    public async IAsyncEnumerable<SearchIndex> GetAll()
+    public IEnumerable<SearchIndex> GetAll()
     {
         if (!Directory.Exists(_options.IndexesDirectory))
         {
@@ -27,8 +27,10 @@ public class FileSearchIndexRepository : ISearchIndexRepository
 
         foreach (var file in files)
         {
-            yield return JsonSerializer.Deserialize<SearchIndex>(await ReadAllTextAsync(file), _jsonSerializerOptions)
+            yield return JsonSerializer.Deserialize<SearchIndex>(ReadAllText(file), _jsonSerializerOptions)
                          ?? throw new InvalidOperationException($"Invalid search index definition file: {file}");
+            // yield return JsonSerializer.Deserialize<SearchIndex>(await ReadAllTextAsync(file), _jsonSerializerOptions)
+            //              ?? throw new InvalidOperationException($"Invalid search index definition file: {file}");
         }
     }
 
