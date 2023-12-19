@@ -7,32 +7,25 @@ using Microsoft.AspNetCore.OData.Routing.Controllers;
 
 namespace AzureSearchEmulator.Controllers;
 
-public class DocumentSearchingController : ODataController
+public class DocumentSearchingController(
+    IIndexSearcher indexSearcher,
+    ISearchIndexRepository searchIndexRepository)
+    : ODataController
 {
-    private readonly IIndexSearcher _indexSearcher;
-    private readonly ISearchIndexRepository _searchIndexRepository;
-
-    public DocumentSearchingController(IIndexSearcher indexSearcher, 
-        ISearchIndexRepository searchIndexRepository)
-    {
-        _indexSearcher = indexSearcher;
-        _searchIndexRepository = searchIndexRepository;
-    }
-
     [HttpGet]
     [Route("indexes/{indexKey}/docs/$count")]
     [Route("indexes/({indexKey})/docs/$count")]
     public async Task<IActionResult> GetDocumentCount(string indexKey)
     {
-        var index = await _searchIndexRepository.Get(indexKey);
+        var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
         {
             return NotFound();
         }
 
-        var count = await _indexSearcher.GetDocCount(index);
-        
+        var count = await indexSearcher.GetDocCount(index);
+
         return Ok(count);
     }
 
@@ -42,14 +35,14 @@ public class DocumentSearchingController : ODataController
     [EnableQuery]
     public async Task<IActionResult> GetDocument(string indexKey, string key)
     {
-        var index = await _searchIndexRepository.Get(indexKey);
+        var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
         {
             return NotFound();
         }
 
-        var doc = await _indexSearcher.GetDoc(index, key);
+        var doc = await indexSearcher.GetDoc(index, key);
 
         if (doc == null)
         {
@@ -120,14 +113,14 @@ public class DocumentSearchingController : ODataController
             return BadRequest(ModelState);
         }
 
-        var index = await _searchIndexRepository.Get(indexKey);
+        var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
         {
             return NotFound();
         }
 
-        var response = await _indexSearcher.Search(index, request);
+        var response = await indexSearcher.Search(index, request);
 
         var oDataResponse = new JsonObject();
 

@@ -3,15 +3,8 @@ using Lucene.Net.Index;
 
 namespace AzureSearchEmulator.Indexing;
 
-public class MergeOrUploadIndexDocumentAction : UpsertIndexDocumentActionBase
+public class MergeOrUploadIndexDocumentAction(JsonObject item) : UpsertIndexDocumentActionBase(item)
 {
-    public MergeOrUploadIndexDocumentAction(JsonObject item)
-        : base(item)
-    {
-    }
-
     protected override void IndexDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields)
-    {
-        MergeDocument(context, keyTerm, docFields, true);
-    }
+        => MergeDocument(context, keyTerm, docFields, true);
 }

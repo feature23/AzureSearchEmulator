@@ -5,16 +5,10 @@ using static System.IO.File;
 
 namespace AzureSearchEmulator.Repositories;
 
-public class FileSearchIndexRepository : ISearchIndexRepository
+public class FileSearchIndexRepository(JsonSerializerOptions jsonSerializerOptions, IOptions<EmulatorOptions> options)
+    : ISearchIndexRepository
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
-    private readonly EmulatorOptions _options;
-
-    public FileSearchIndexRepository(JsonSerializerOptions jsonSerializerOptions, IOptions<EmulatorOptions> options)
-    {
-        _jsonSerializerOptions = jsonSerializerOptions;
-        _options = options.Value;
-    }
+    private readonly EmulatorOptions _options = options.Value;
 
     public async IAsyncEnumerable<SearchIndex> GetAll()
     {
@@ -27,7 +21,7 @@ public class FileSearchIndexRepository : ISearchIndexRepository
 
         foreach (var file in files)
         {
-            yield return JsonSerializer.Deserialize<SearchIndex>(await ReadAllTextAsync(file), _jsonSerializerOptions)
+            yield return JsonSerializer.Deserialize<SearchIndex>(await ReadAllTextAsync(file), jsonSerializerOptions)
                          ?? throw new InvalidOperationException($"Invalid search index definition file: {file}");
         }
     }
@@ -46,10 +40,10 @@ public class FileSearchIndexRepository : ISearchIndexRepository
             return null;
         }
 
-        return JsonSerializer.Deserialize<SearchIndex>(await ReadAllTextAsync(file), _jsonSerializerOptions);
+        return JsonSerializer.Deserialize<SearchIndex>(await ReadAllTextAsync(file), jsonSerializerOptions);
     }
 
-    public async Task Create(SearchIndex index)
+    public Task Create(SearchIndex index)
     {
         if (!Directory.Exists(_options.IndexesDirectory))
         {
@@ -63,9 +57,9 @@ public class FileSearchIndexRepository : ISearchIndexRepository
             throw new SearchIndexExistsException(index.Name);
         }
 
-        string json = JsonSerializer.Serialize(index, _jsonSerializerOptions);
+        string json = JsonSerializer.Serialize(index, jsonSerializerOptions);
 
-        await WriteAllTextAsync(file, json);
+        return WriteAllTextAsync(file, json);
     }
 
     public Task<bool> Delete(SearchIndex index)

@@ -9,6 +9,6 @@ public interface ISearchIndexRepository
     Task<SearchIndex?> Get(string key);
 
     Task Create(SearchIndex index);
-    
+
     Task<bool> Delete(SearchIndex index);
 }

@@ -35,9 +35,12 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
             };
         }
 
-        if (tokenIn.Left is EndPathToken { Identifier: string path }
-            && tokenIn.OperatorKind == BinaryOperatorKind.Equal
-            && tokenIn.Right is LiteralToken literalToken)
+        if (tokenIn is
+            {
+                Left: EndPathToken { Identifier: string path },
+                OperatorKind: BinaryOperatorKind.Equal,
+                Right: LiteralToken literalToken
+            })
         {
             return literalToken.Value switch
             {
@@ -71,8 +74,11 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
 
     public Query Visit(InToken tokenIn)
     {
-        if (tokenIn.Left is EndPathToken { Identifier: string path }
-            && tokenIn.Right is LiteralToken { Value: string valueString })
+        if (tokenIn is
+            {
+                Left: EndPathToken { Identifier: string path },
+                Right: LiteralToken { Value: string valueString }
+            })
         {
             valueString = valueString.TrimStart('(').TrimEnd(')');
 
@@ -123,7 +129,7 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
         throw new NotImplementedException($"Function {tokenIn.Name} not implemented");
     }
 
-    private static Query VisitSearchIn(FunctionCallToken tokenIn)
+    private static BooleanQuery VisitSearchIn(FunctionCallToken tokenIn)
     {
         var args = tokenIn.Arguments.ToList();
 

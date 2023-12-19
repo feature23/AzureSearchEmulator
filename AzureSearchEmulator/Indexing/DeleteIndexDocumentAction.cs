@@ -2,13 +2,8 @@
 
 namespace AzureSearchEmulator.Indexing;
 
-public class DeleteIndexDocumentAction : IndexDocumentAction
+public class DeleteIndexDocumentAction(JsonObject item) : IndexDocumentAction(item)
 {
-    public DeleteIndexDocumentAction(JsonObject item)
-        : base(item)
-    {
-    }
-    
     public override IndexingResult PerformIndexingAsync(IndexingContext context)
     {
         var keyTerm = GetKeyTerm(context.Key);

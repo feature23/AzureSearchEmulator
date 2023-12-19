@@ -7,24 +7,17 @@ using Microsoft.AspNetCore.OData.Routing.Controllers;
 
 namespace AzureSearchEmulator.Controllers;
 
-public class IndexesController : ODataController
+public class IndexesController(
+    JsonSerializerOptions jsonSerializerOptions,
+    ISearchIndexRepository searchIndexRepository)
+    : ODataController
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
-    private readonly ISearchIndexRepository _searchIndexRepository;
-
-    public IndexesController(JsonSerializerOptions jsonSerializerOptions, 
-        ISearchIndexRepository searchIndexRepository)
-    {
-        _jsonSerializerOptions = jsonSerializerOptions;
-        _searchIndexRepository = searchIndexRepository;
-    }
-
     [HttpGet]
     [EnableQuery]
     [Route("indexes")]
     public IAsyncEnumerable<SearchIndex> Get()
     {
-        return _searchIndexRepository.GetAll();
+        return searchIndexRepository.GetAll();
     }
 
     [HttpGet]
@@ -32,7 +25,7 @@ public class IndexesController : ODataController
     [Route("indexes/{key}")]
     public async Task<IActionResult> Get(string key)
     {
-        var index = await _searchIndexRepository.Get(key);
+        var index = await searchIndexRepository.Get(key);
 
         if (index == null)
         {
@@ -49,7 +42,7 @@ public class IndexesController : ODataController
         // HACK.PI: For some reason, having this as a parameter with [FromBody] fails to deserialize properly.
         using var sr = new StreamReader(Request.Body);
         var indexJson = await sr.ReadToEndAsync();
-        var index = JsonSerializer.Deserialize<SearchIndex>(indexJson, _jsonSerializerOptions);
+        var index = JsonSerializer.Deserialize<SearchIndex>(indexJson, jsonSerializerOptions);
 
         if (index == null || !ModelState.IsValid)
         {
@@ -58,7 +51,7 @@ public class IndexesController : ODataController
 
         try
         {
-            await _searchIndexRepository.Create(index);
+            await searchIndexRepository.Create(index);
         }
         catch (SearchIndexExistsException)
         {
@@ -73,14 +66,14 @@ public class IndexesController : ODataController
     [Route("indexes/{key}")]
     public async Task<IActionResult> Delete(string key)
     {
-        var index = await _searchIndexRepository.Get(key);
+        var index = await searchIndexRepository.Get(key);
 
         if (index == null)
         {
             return NotFound();
         }
 
-        await _searchIndexRepository.Delete(index);
+        await searchIndexRepository.Delete(index);
 
         return NoContent();
     }

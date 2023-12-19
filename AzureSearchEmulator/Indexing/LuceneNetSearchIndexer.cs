@@ -5,24 +5,18 @@ using Lucene.Net.Util;
 
 namespace AzureSearchEmulator.Indexing;
 
-public class LuceneNetSearchIndexer : ISearchIndexer
+public class LuceneNetSearchIndexer(
+    ILuceneDirectoryFactory luceneDirectoryFactory,
+    ILuceneIndexReaderFactory luceneIndexReaderFactory)
+    : ISearchIndexer
 {
-    private readonly ILuceneDirectoryFactory _luceneDirectoryFactory;
-    private readonly ILuceneIndexReaderFactory _luceneIndexReaderFactory;
-
-    public LuceneNetSearchIndexer(ILuceneDirectoryFactory luceneDirectoryFactory, ILuceneIndexReaderFactory luceneIndexReaderFactory)
-    {
-        _luceneDirectoryFactory = luceneDirectoryFactory;
-        _luceneIndexReaderFactory = luceneIndexReaderFactory;
-    }
-
     public IndexDocumentsResult IndexDocuments(SearchIndex index, IList<IndexDocumentAction> actions)
     {
         var analyzer = AnalyzerHelper.GetPerFieldIndexAnalyzer(index.Fields);
 
         var config = new IndexWriterConfig(LuceneVersion.LUCENE_48, analyzer);
 
-        var directory = _luceneDirectoryFactory.GetDirectory(index.Name);
+        var directory = luceneDirectoryFactory.GetDirectory(index.Name);
         using var writer = new IndexWriter(directory, config);
 
         var key = index.GetKeyField();
@@ -49,7 +43,7 @@ public class LuceneNetSearchIndexer : ISearchIndexer
         writer.Commit();
         writer.Flush(true, true);
 
-        _luceneIndexReaderFactory.RefreshReader(index.Name);
+        luceneIndexReaderFactory.RefreshReader(index.Name);
 
         return results;
     }

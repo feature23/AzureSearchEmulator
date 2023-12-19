@@ -4,14 +4,9 @@ using Lucene.Net.Index;
 
 namespace AzureSearchEmulator.Indexing;
 
-public abstract class IndexDocumentAction
+public abstract class IndexDocumentAction(JsonObject item)
 {
-    protected IndexDocumentAction(JsonObject item)
-    {
-        Item = item;
-    }
-
-    public JsonObject Item { get; }
+    public JsonObject Item { get; } = item;
 
     protected Term GetKeyTerm(SearchField key)
     {
