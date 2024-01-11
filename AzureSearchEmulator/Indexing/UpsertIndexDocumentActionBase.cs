@@ -6,13 +6,8 @@ using Lucene.Net.Search;
 
 namespace AzureSearchEmulator.Indexing;
 
-public abstract class UpsertIndexDocumentActionBase : IndexDocumentAction
+public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocumentAction(item)
 {
-    protected UpsertIndexDocumentActionBase(JsonObject item)
-        : base(item)
-    {
-    }
-
     public override IndexingResult PerformIndexingAsync(IndexingContext context)
     {
         var keyTerm = GetKeyTerm(context.Key);
@@ -41,7 +36,7 @@ public abstract class UpsertIndexDocumentActionBase : IndexDocumentAction
             select f.CreateField(v.Value);
     }
 
-    protected void MergeDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields, bool uploadIfMissing)
+    protected static void MergeDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields, bool uploadIfMissing)
     {
         var reader = context.Reader.Value;
         var searcher = new IndexSearcher(reader);

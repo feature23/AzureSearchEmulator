@@ -3,16 +3,9 @@ using Lucene.Net.Index;
 
 namespace AzureSearchEmulator.SearchData;
 
-public class LuceneDirectoryReaderFactory : ILuceneIndexReaderFactory
+public class LuceneDirectoryReaderFactory(ILuceneDirectoryFactory luceneDirectoryFactory) : ILuceneIndexReaderFactory
 {
-    private readonly ILuceneDirectoryFactory _luceneDirectoryFactory;
-
     private readonly IDictionary<string, IndexReader> _indexReaders = new ConcurrentDictionary<string, IndexReader>();
-
-    public LuceneDirectoryReaderFactory(ILuceneDirectoryFactory luceneDirectoryFactory)
-    {
-        _luceneDirectoryFactory = luceneDirectoryFactory;
-    }
 
     public IndexReader GetIndexReader(string indexName)
     {
@@ -30,7 +23,7 @@ public class LuceneDirectoryReaderFactory : ILuceneIndexReaderFactory
 
     public IndexReader RefreshReader(string indexName)
     {
-        var directory = _luceneDirectoryFactory.GetDirectory(indexName);
+        var directory = luceneDirectoryFactory.GetDirectory(indexName);
 
         var reader = DirectoryReader.Open(directory);
 

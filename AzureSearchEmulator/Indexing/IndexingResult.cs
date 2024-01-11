@@ -1,27 +1,17 @@
 ﻿namespace AzureSearchEmulator.Indexing;
 
-public class IndexingResult
+public class IndexingResult(string key, string? errorMessage, bool status, int statusCode)
 {
     public IndexingResult(string key, bool status, int statusCode)
+        : this(key, null, status, statusCode)
     {
-        Key = key;
-        Status = status;
-        StatusCode = statusCode;
     }
 
-    public IndexingResult(string key, string? errorMessage, bool status, int statusCode)
-    {
-        Key = key;
-        ErrorMessage = errorMessage;
-        Status = status;
-        StatusCode = statusCode;
-    }
+    public string Key { get; } = key;
 
-    public string Key { get; }
+    public string? ErrorMessage { get; } = errorMessage;
 
-    public string? ErrorMessage { get; }
+    public bool Status { get; } = status;
 
-    public bool Status { get; }
-
-    public int StatusCode { get; }
+    public int StatusCode { get; } = statusCode;
 }

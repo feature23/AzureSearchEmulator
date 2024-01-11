@@ -12,15 +12,8 @@ using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryC
 
 namespace AzureSearchEmulator.Searching;
 
-public class LuceneNetIndexSearcher : IIndexSearcher
+public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory) : IIndexSearcher
 {
-    private readonly ILuceneIndexReaderFactory _indexReaderFactory;
-
-    public LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory)
-    {
-        _indexReaderFactory = indexReaderFactory;
-    }
-
     public Task<JsonObject?> GetDoc(SearchIndex index, string key)
     {
         var searcher = GetSearcher(index);
@@ -43,7 +36,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
     public Task<int> GetDocCount(SearchIndex index)
     {
-        var reader = _indexReaderFactory.GetIndexReader(index.Name);
+        var reader = indexReaderFactory.GetIndexReader(index.Name);
 
         return Task.FromResult(reader.NumDocs);
     }
@@ -354,7 +347,7 @@ public class LuceneNetIndexSearcher : IIndexSearcher
 
     private IndexSearcher GetSearcher(SearchIndex index)
     {
-        var reader = _indexReaderFactory.GetIndexReader(index.Name);
+        var reader = indexReaderFactory.GetIndexReader(index.Name);
 
         return new IndexSearcher(reader);
     }

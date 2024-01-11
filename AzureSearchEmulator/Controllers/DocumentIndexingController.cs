@@ -7,27 +7,18 @@ using Microsoft.AspNetCore.OData.Routing.Controllers;
 
 namespace AzureSearchEmulator.Controllers;
 
-public class DocumentIndexingController : ODataController
+public class DocumentIndexingController(
+    JsonSerializerOptions jsonSerializerOptions,
+    ISearchIndexRepository searchIndexRepository,
+    ISearchIndexer searchIndexer)
+    : ODataController
 {
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
-    private readonly ISearchIndexRepository _searchIndexRepository;
-    private readonly ISearchIndexer _searchIndexer;
-
-    public DocumentIndexingController(JsonSerializerOptions jsonSerializerOptions,
-        ISearchIndexRepository searchIndexRepository,
-        ISearchIndexer searchIndexer)
-    {
-        _jsonSerializerOptions = jsonSerializerOptions;
-        _searchIndexRepository = searchIndexRepository;
-        _searchIndexer = searchIndexer;
-    }
-
     [HttpPost]
     [Route("indexes('{indexKey}')/docs/search.index")]
     [Route("indexes/{indexKey}/docs/search.index")]
     public async Task<IActionResult> IndexDocuments(string indexKey)
     {
-        var index = await _searchIndexRepository.Get(indexKey);
+        var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
         {
@@ -36,7 +27,7 @@ public class DocumentIndexingController : ODataController
 
         using var sr = new StreamReader(Request.Body);
         var json = await sr.ReadToEndAsync();
-        var batch = JsonSerializer.Deserialize<IndexDocumentsBatch>(json, _jsonSerializerOptions);
+        var batch = JsonSerializer.Deserialize<IndexDocumentsBatch>(json, jsonSerializerOptions);
 
         if (batch == null)
         {
@@ -69,7 +60,7 @@ public class DocumentIndexingController : ODataController
             itemIndex++;
         }
 
-        var result = _searchIndexer.IndexDocuments(index, actions);
+        var result = searchIndexer.IndexDocuments(index, actions);
 
         return StatusCode(result.Value.Any(i => !i.Status) ? 207 : 200, result);
     }

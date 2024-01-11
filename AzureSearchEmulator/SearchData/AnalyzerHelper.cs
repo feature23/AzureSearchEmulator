@@ -88,7 +88,7 @@ public static class AnalyzerHelper
             .Select(i => (i.Name, Analyzer: i.SearchAnalyzer ?? i.Analyzer))
             .Where(i => i.Analyzer != null)
             .ToDictionary(i => i.Name, i => GetAnalyzer(i.Analyzer));
-        
+
         return new PerFieldAnalyzerWrapper(new StandardAnalyzer(Version), analyzers);
     }
 

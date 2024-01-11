@@ -5,16 +5,11 @@ using Directory = Lucene.Net.Store.Directory;
 
 namespace AzureSearchEmulator.SearchData;
 
-public class SimpleFSDirectoryFactory : ILuceneDirectoryFactory
+public class SimpleFSDirectoryFactory(IOptions<EmulatorOptions> options) : ILuceneDirectoryFactory
 {
-    private readonly EmulatorOptions _options;
+    private readonly EmulatorOptions _options = options.Value;
 
     private readonly IDictionary<string, Directory> _directories = new ConcurrentDictionary<string, Directory>();
-
-    public SimpleFSDirectoryFactory(IOptions<EmulatorOptions> options)
-    {
-        _options = options.Value;
-    }
 
     public Directory GetDirectory(string indexName)
     {

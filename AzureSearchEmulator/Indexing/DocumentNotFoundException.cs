@@ -1,9 +1,3 @@
 ﻿namespace AzureSearchEmulator.Indexing;
 
-public class DocumentNotFoundException : Exception
-{
-    public DocumentNotFoundException()
-        : base("The specified document was not found")
-    {
-    }
-}
+public class DocumentNotFoundException() : Exception("The specified document was not found");
