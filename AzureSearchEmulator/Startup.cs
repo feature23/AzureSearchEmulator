@@ -15,6 +15,8 @@ namespace AzureSearchEmulator;
 
 public class Startup(IConfiguration configuration)
 {
+    private const string CorsDefaultPolicyName = "AllowAllOrigins";
+    
     public IConfiguration Configuration { get; } = configuration;
 
     // This method gets called by the runtime. Use this method to add services to the container.
@@ -27,7 +29,7 @@ public class Startup(IConfiguration configuration)
 
         services.AddCors(options =>
         {
-            options.AddPolicy("AllowAllOrigins",
+            options.AddPolicy(CorsDefaultPolicyName,
                 builder =>
                 {
                     builder
@@ -74,7 +76,7 @@ public class Startup(IConfiguration configuration)
             app.UseDeveloperExceptionPage();
         }
 
-        app.UseCors("AllowAllOrigins");
+        app.UseCors(CorsDefaultPolicyName);
         app.UseODataRouteDebug();
         app.UseODataQueryRequest();
         app.UseODataBatching();
