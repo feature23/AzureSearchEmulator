@@ -25,6 +25,18 @@ public class Startup(IConfiguration configuration)
 
         services.Configure<EmulatorOptions>(Configuration.GetSection("Emulator"));
 
+        services.AddCors(options =>
+        {
+            options.AddPolicy("AllowAllOrigins",
+                builder =>
+                {
+                    builder
+                    .AllowAnyOrigin()
+                    .AllowAnyMethod()
+                    .AllowAnyHeader();
+                });
+        });
+
         services.AddControllers()
             .AddJsonOptions(options =>
             {
@@ -62,6 +74,7 @@ public class Startup(IConfiguration configuration)
             app.UseDeveloperExceptionPage();
         }
 
+        app.UseCors("AllowAllOrigins");
         app.UseODataRouteDebug();
         app.UseODataQueryRequest();
         app.UseODataBatching();
