@@ -54,6 +54,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `search` - The actual search query text to pass to the query parser
   * `searchFields` - Comma-delimited list of fields to search
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
+* Get service stats (mostly dummy values)
+  * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.
