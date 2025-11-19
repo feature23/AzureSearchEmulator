@@ -33,7 +33,7 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
         return from f in index.Fields
             join v in Item on f.Name equals v.Key
             where v.Value != null
-            select f.CreateField(v.Value);
+            select f.CreateField(v.Value!); // [!]: null checked by where clause
     }
 
     protected static void MergeDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields, bool uploadIfMissing)
