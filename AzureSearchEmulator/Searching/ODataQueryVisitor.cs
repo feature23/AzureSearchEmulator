@@ -251,4 +251,9 @@ public class ODataQueryVisitor : ISyntacticTreeVisitor<Query>
     {
         throw new NotImplementedException();
     }
+
+    public Query Visit(RootPathToken tokenIn)
+    {
+        throw new NotImplementedException();
+    }
 }
