@@ -14,7 +14,7 @@ We're hiring remote engineers to contribute to cutting-edge AI and custom softwa
 ## Quick Start
 
 1. Clone the repo.
-2. Open AzureSearchEmulator.sln in Visual Studio 2022 and run it, 
+2. Open AzureSearchEmulator.sln in Visual Studio 2026, Rider, or Visual Studio Code with C# Dev Kit and run it, 
 or cd to the `AzureSearchEmulator` folder and run `dotnet run` from the command-line.
 
 ## Features
@@ -26,7 +26,7 @@ This application is *not* intended for use in production or to replace Azure Sea
 There is another [azure-search-emulator](https://github.com/tomasloksa/azure-search-emulator) project that may or may not be a better
 fit for your needs, depending on what you're trying to do. Compared to that project, this project:
 
-* Has no external service/runtime dependencies beyond .NET 6
+* Has no external service/runtime dependencies beyond .NET 10
 * Can be run and debugged simply with F5 in Visual Studio, or `dotnet run` on the command line
 * Does not require Docker or any kind of containers/virtualization, but can be run with Docker if you prefer (see below)
 * Does not require Solr (or Java), Docker Compose, or any kind of orchestration
