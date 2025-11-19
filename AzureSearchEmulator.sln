@@ -5,6 +5,10 @@ VisualStudioVersion = 16.0.31515.178
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureSearchEmulator", "AzureSearchEmulator\AzureSearchEmulator.csproj", "{1A2BDBB3-02F7-4B9D-9CE0-8E2C92772080}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureSearchEmulator.IntegrationTests", "AzureSearchEmulator.IntegrationTests\AzureSearchEmulator.IntegrationTests.csproj", "{00000000-0000-0000-0000-000000000000}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DebugClient", "DebugClient\DebugClient.csproj", "{787C4AEB-D46D-472F-9BC5-10857FEF2A05}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +19,12 @@ Global
 		{1A2BDBB3-02F7-4B9D-9CE0-8E2C92772080}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1A2BDBB3-02F7-4B9D-9CE0-8E2C92772080}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1A2BDBB3-02F7-4B9D-9CE0-8E2C92772080}.Release|Any CPU.Build.0 = Release|Any CPU
+		{00000000-0000-0000-0000-000000000000}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{00000000-0000-0000-0000-000000000000}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{787C4AEB-D46D-472F-9BC5-10857FEF2A05}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{787C4AEB-D46D-472F-9BC5-10857FEF2A05}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{787C4AEB-D46D-472F-9BC5-10857FEF2A05}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{787C4AEB-D46D-472F-9BC5-10857FEF2A05}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

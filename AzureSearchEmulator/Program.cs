@@ -75,7 +75,11 @@ app.UseRouting();
 
 app.Use((context, next) =>
 {
-    Console.WriteLine($"{context.Request.Method} {context.Request.GetDisplayUrl()}");
+    var method = context.Request.Method;
+    var path = context.Request.Path;
+    var queryString = context.Request.QueryString.ToString();
+    var fullPath = string.IsNullOrEmpty(queryString) ? path.ToString() : $"{path}{queryString}";
+    Console.WriteLine($"[HTTP {method}] {fullPath}");
     return next();
 });
 

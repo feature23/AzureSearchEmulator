@@ -9,7 +9,7 @@ public class SimpleFSDirectoryFactory(IOptions<EmulatorOptions> options) : ILuce
 {
     private readonly EmulatorOptions _options = options.Value;
 
-    private readonly IDictionary<string, Directory> _directories = new ConcurrentDictionary<string, Directory>();
+    private readonly ConcurrentDictionary<string, Directory> _directories = new ConcurrentDictionary<string, Directory>();
 
     public Directory GetDirectory(string indexName)
     {
@@ -24,8 +24,18 @@ public class SimpleFSDirectoryFactory(IOptions<EmulatorOptions> options) : ILuce
 
         directory = new SimpleFSDirectory(path);
 
-        _directories.Add(indexName, directory);
+        _directories.TryAdd(indexName, directory);
 
         return directory;
+    }
+
+    public void ClearCachedDirectory(string indexName)
+    {
+        indexName = indexName.ToLowerInvariant();
+
+        if (_directories.TryRemove(indexName, out var directory))
+        {
+            directory.Dispose();
+        }
     }
 }

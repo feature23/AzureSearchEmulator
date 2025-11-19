@@ -2,7 +2,6 @@
 using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.OData.Query;
 using Microsoft.AspNetCore.OData.Routing.Controllers;
 
 namespace AzureSearchEmulator.Controllers;
@@ -14,14 +13,17 @@ public class DocumentSearchingController(
 {
     [HttpGet]
     [Route("indexes/{indexKey}/docs/$count")]
-    [Route("indexes/({indexKey})/docs/$count")]
+    [Route("indexes({indexKey})/docs/$count")]
     public async Task<IActionResult> GetDocumentCount(string indexKey)
     {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+
         var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
         {
-            return NotFound();
+            return NotFound($"The specified index does not exist. Index Key: {indexKey}");
         }
 
         var count = await indexSearcher.GetDocCount(index);
@@ -31,22 +33,25 @@ public class DocumentSearchingController(
 
     [HttpGet]
     [Route("indexes/{indexKey}/docs/{key}")]
-    [Route("indexes/({indexKey})/docs/({key})")]
-    [EnableQuery]
+    [Route("indexes({indexKey})/docs({key})")]
     public async Task<IActionResult> GetDocument(string indexKey, string key)
     {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+        key = key.Trim('\'');
+
         var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
         {
-            return NotFound();
+            return NotFound($"The specified index does not exist. Index Key: {indexKey}");
         }
 
         var doc = await indexSearcher.GetDoc(index, key);
 
         if (doc == null)
         {
-            return NotFound();
+            return NotFound($"The specified document does not exist. Key: {key}");
         }
 
         return Ok(doc);
@@ -54,7 +59,8 @@ public class DocumentSearchingController(
 
     [HttpGet]
     [Route("indexes/{indexKey}/docs")]
-    public async Task<IActionResult> SearchGet(string indexKey, 
+    [Route("indexes({indexKey})/docs")]
+    public async Task<IActionResult> SearchGet(string indexKey,
         [FromQuery(Name = "$filter")] string? filter,
         [FromQuery(Name = "$count")] bool? count,
         [FromQuery(Name = "$orderby")] string? orderby,
@@ -64,6 +70,9 @@ public class DocumentSearchingController(
         [FromQuery(Name = "facet")] IList<string>? facet,
         [FromQuery] SearchRequest searchRequest)
     {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
@@ -94,10 +103,13 @@ public class DocumentSearchingController(
 
     [HttpPost]
     [Route("indexes/{indexKey}/docs/search")]
-    [Route("indexes('{indexKey}')/docs/search")]
-    [Route("indexes('{indexKey}')/docs/search.post.search")]
+    [Route("indexes({indexKey})/docs/search")]
+    [Route("indexes({indexKey})/docs/search.post.search")]
     public async Task<IActionResult> SearchPost(string indexKey, [FromBody] SearchRequest request)
     {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+
         if (request.Top is > 1000 or < 0)
         {
             ModelState.AddModelError(nameof(request.Top), "Page size must be between 0 and 1000");
@@ -117,7 +129,7 @@ public class DocumentSearchingController(
 
         if (index == null)
         {
-            return NotFound();
+            return NotFound($"The specified index does not exist. Index Key: {indexKey}");
         }
 
         var response = await indexSearcher.Search(index, request);

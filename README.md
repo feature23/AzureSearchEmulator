@@ -1,7 +1,7 @@
 # Azure Search Emulator
 [![.NET](https://github.com/feature23/AzureSearchEmulator/actions/workflows/dotnet.yml/badge.svg)](https://github.com/feature23/AzureSearchEmulator/actions/workflows/dotnet.yml)
 
-A local emulator for Azure (Cognitive) Search Service.
+A local emulator for Azure AI (previously Cognitive) Search Service.
 
 This project is currently a prototype, with work underway to validate it in various real-world scenarios 
 to ensure that it accurately emulates Azure Search as best as possible.
@@ -89,6 +89,24 @@ docker build . -t azure-search-emulator
 # run the container on port 5080 (feel free to change) and mount the volume
 docker run -dp 5080:80 -v az-search-emu:/app/indexes azure-search-emulator
 ```
+
+## Contributing
+
+Please make sure there is an issue for the feature or bug you are working on before submitting a pull request.
+If not, please open an issue first so we can discuss the change.
+
+Make sure all unit tests pass before submitting a pull request.
+
+To run the unit tests, from the repo root run:
+
+```bash
+dotnet test
+```
+
+If adding a new API or feature, please add appropriate unit tests and DebugClient checks to cover the new functionality.
+
+When creating a pull request, please do so from a branch on your fork, not from main/master.
+A good naming convention is to use the issue number, i.e. `issue/123`.
 
 ## License
 

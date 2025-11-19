@@ -5,4 +5,5 @@ namespace AzureSearchEmulator.SearchData;
 public interface ILuceneDirectoryFactory
 {
     Directory GetDirectory(string indexName);
+    void ClearCachedDirectory(string indexName);
 }

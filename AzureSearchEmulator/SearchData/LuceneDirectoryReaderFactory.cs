@@ -31,4 +31,15 @@ public class LuceneDirectoryReaderFactory(ILuceneDirectoryFactory luceneDirector
 
         return reader;
     }
+
+    public void ClearCachedReader(string indexName)
+    {
+        indexName = indexName.ToLowerInvariant();
+
+        if (_indexReaders.TryGetValue(indexName, out var reader))
+        {
+            reader.Dispose();
+            _indexReaders.Remove(indexName);
+        }
+    }
 }
