@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
+using AzureSearchEmulator.SearchData;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OData.Query;
 using Microsoft.AspNetCore.OData.Routing.Controllers;
@@ -9,7 +10,9 @@ namespace AzureSearchEmulator.Controllers;
 
 public class IndexesController(
     JsonSerializerOptions jsonSerializerOptions,
-    ISearchIndexRepository searchIndexRepository)
+    ISearchIndexRepository searchIndexRepository,
+    ILuceneDirectoryFactory luceneDirectoryFactory,
+    ILuceneIndexReaderFactory luceneIndexReaderFactory)
     : ODataController
 {
     [HttpGet]
@@ -66,6 +69,9 @@ public class IndexesController(
     [Route("indexes/{key}")]
     public async Task<IActionResult> Delete(string key)
     {
+        // Strip quotes that may be captured from OData-style URLs
+        key = key.Trim('\'');
+
         var index = await searchIndexRepository.Get(key);
 
         if (index == null)
@@ -74,6 +80,10 @@ public class IndexesController(
         }
 
         await searchIndexRepository.Delete(index);
+
+        // Clear cached Lucene resources
+        luceneIndexReaderFactory.ClearCachedReader(index.Name);
+        luceneDirectoryFactory.ClearCachedDirectory(index.Name);
 
         return NoContent();
     }

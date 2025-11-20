@@ -14,10 +14,13 @@ public class DocumentIndexingController(
     : ODataController
 {
     [HttpPost]
-    [Route("indexes('{indexKey}')/docs/search.index")]
+    [Route("indexes({indexKey})/docs/search.index")]
     [Route("indexes/{indexKey}/docs/search.index")]
     public async Task<IActionResult> IndexDocuments(string indexKey)
     {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+
         var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
@@ -48,7 +51,7 @@ public class DocumentIndexingController(
             }
 
             var action = actionNode.GetValue<string>();
-            
+
             actions.Add(action switch {
                 "upload" => new UploadIndexDocumentAction(item),
                 "merge" => new MergeIndexDocumentAction(item),

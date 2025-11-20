@@ -5,7 +5,7 @@ namespace AzureSearchEmulator.SearchData;
 
 public class LuceneDirectoryReaderFactory(ILuceneDirectoryFactory luceneDirectoryFactory) : ILuceneIndexReaderFactory
 {
-    private readonly IDictionary<string, IndexReader> _indexReaders = new ConcurrentDictionary<string, IndexReader>();
+    private readonly ConcurrentDictionary<string, IndexReader> _indexReaders = new();
 
     public IndexReader GetIndexReader(string indexName)
     {
@@ -30,5 +30,15 @@ public class LuceneDirectoryReaderFactory(ILuceneDirectoryFactory luceneDirector
         _indexReaders[indexName] = reader;
 
         return reader;
+    }
+
+    public void ClearCachedReader(string indexName)
+    {
+        indexName = indexName.ToLowerInvariant();
+
+        if (_indexReaders.TryRemove(indexName, out var reader))
+        {
+            reader.Dispose();
+        }
     }
 }

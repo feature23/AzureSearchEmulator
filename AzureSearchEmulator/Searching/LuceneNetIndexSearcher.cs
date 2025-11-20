@@ -36,9 +36,17 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     public Task<int> GetDocCount(SearchIndex index)
     {
-        var reader = indexReaderFactory.GetIndexReader(index.Name);
+        try
+        {
+            var reader = indexReaderFactory.GetIndexReader(index.Name);
 
-        return Task.FromResult(reader.NumDocs);
+            return Task.FromResult(reader.NumDocs);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // If we've come this far, the index exists, but has no documents, so it's okay to return 0
+            return Task.FromResult(0);
+        }
     }
 
     public Task<SearchResponse> Search(SearchIndex index, SearchRequest request)
@@ -253,6 +261,11 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     private static Query? ParseSimpleQuery(SearchIndex index, SearchRequest request, Analyzer analyzer)
     {
+        if (request.Search == "*" || request.Search == "*:*")
+        {
+            return new MatchAllDocsQuery();
+        }
+
         var searchFields = GetSearchFields(index, request.SearchFields);
 
         var weights = new Dictionary<string, float>(searchFields.Select(i => new KeyValuePair<string, float>(i, 1.0f)));
@@ -267,6 +280,11 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     private static Query? ParseFullQuery(SearchRequest request, SearchField? firstTextField, Analyzer analyzer)
     {
+        if (request.Search == "*" || request.Search == "*:*")
+        {
+            return new MatchAllDocsQuery();
+        }
+
         var queryParser = new StandardQueryParser(analyzer)
         {
             DefaultOperator = GetDefaultOperator(request.SearchMode),
