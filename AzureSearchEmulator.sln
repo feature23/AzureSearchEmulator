@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureSearchEmulator.Aspire"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureSearchEmulator.Aspire.DemoAppHost", "AzureSearchEmulator.Aspire.DemoAppHost\AzureSearchEmulator.Aspire.DemoAppHost.csproj", "{D771EC01-A785-4B7F-AC50-A86D2E281210}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AzureSearchEmulator.Aspire.Tests", "AzureSearchEmulator.Aspire.Tests\AzureSearchEmulator.Aspire.Tests.csproj", "{EDF10963-768B-426B-B4E2-F2C1DBC2C47C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +41,10 @@ Global
 		{D771EC01-A785-4B7F-AC50-A86D2E281210}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D771EC01-A785-4B7F-AC50-A86D2E281210}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D771EC01-A785-4B7F-AC50-A86D2E281210}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EDF10963-768B-426B-B4E2-F2C1DBC2C47C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EDF10963-768B-426B-B4E2-F2C1DBC2C47C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EDF10963-768B-426B-B4E2-F2C1DBC2C47C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EDF10963-768B-426B-B4E2-F2C1DBC2C47C}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

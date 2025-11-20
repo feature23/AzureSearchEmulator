@@ -50,10 +50,14 @@ public static class AzureSearchEmulatorResourceExtensions
         /// Configures a volume for persisting Azure Search index data.
         /// </summary>
         /// <param name="volumeName">Optional name for the volume. If null, a name will be generated.</param>
+        /// <param name="isReadOnly">Indicates whether the volume should be mounted as read-only.</param>
         /// <returns>The resource builder for further configuration.</returns>
-        public IResourceBuilder<AzureSearchEmulatorResource> WithIndexesVolume(string? volumeName = null)
+        public IResourceBuilder<AzureSearchEmulatorResource> WithIndexesVolume(string? volumeName = null, bool isReadOnly = false)
         {
-            return builder.WithVolume(volumeName ?? VolumeNameGenerator.Generate(builder, "indexes"), "/app/indexes");
+            return builder.WithVolume(
+                name: volumeName ?? VolumeNameGenerator.Generate(builder, "indexes"),
+                target: "/app/indexes",
+                isReadOnly: isReadOnly);
         }
     }
 }
