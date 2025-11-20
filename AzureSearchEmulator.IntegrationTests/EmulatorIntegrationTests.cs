@@ -254,6 +254,194 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         Assert.Equal(404, exception.Status);
     }
 
+    [Fact]
+    public async Task SearchDocuments_SearchIsMatch_BasicQuery_ShouldReturnResults()
+    {
+        const string indexName = "test-ismatch-basic";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create index and upload documents
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        // Act - Use search.ismatch to search for 'laptop' in all searchable fields
+        var options = new SearchOptions
+        {
+            Filter = "search.ismatch('laptop')",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        // Assert
+        Assert.NotNull(results);
+        var resultsList = results.Value.GetResultsAsync();
+        var items = await resultsList.ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.True(items.Any(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
+            "Should return documents with 'laptop' in Name or Description");
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_SearchIsMatch_WithFieldName_ShouldReturnResults()
+    {
+        const string indexName = "test-ismatch-field";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create index and upload documents
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        // Act - Search in specific field using search.ismatch(search, field)
+        var options = new SearchOptions
+        {
+            Filter = "search.ismatch('laptop', 'Name')",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        // Assert
+        Assert.NotNull(results);
+        var resultsList = results.Value.GetResultsAsync();
+        var items = await resultsList.ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.True(items.All(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
+            "All results should have 'laptop' in Name field");
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_SearchIsMatch_WithMultipleFields_ShouldReturnResults()
+    {
+        const string indexName = "test-ismatch-multi-field";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create index and upload documents
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        // Act - Search in multiple fields using search.ismatch(search, fields)
+        var options = new SearchOptions
+        {
+            Filter = "search.ismatch('16000 DPI', 'Name,Description')",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        // Assert
+        Assert.NotNull(results);
+        var resultsList = results.Value.GetResultsAsync();
+        var items = await resultsList.ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.Contains(items, r => r.Document.Name == "Gaming Mouse" || r.Document.Description.Contains("16000 DPI"));
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_SearchIsMatch_WithBooleanOperator_ShouldReturnResults()
+    {
+        const string indexName = "test-ismatch-and";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create index and upload documents
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        // Act - Combine search.ismatch with other filters using AND
+        var options = new SearchOptions
+        {
+            Filter = "search.ismatch('laptop') and InStock eq true",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        // Assert
+        Assert.NotNull(results);
+        var resultsList = results.Value.GetResultsAsync();
+        var items = await resultsList.ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.True(items.All(r => r.Document.InStock), "All results should have InStock = true");
+        Assert.True(items.All(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase) ||
+                                   r.Document.Description.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
+            "All results should contain 'laptop'");
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_SearchIsMatch_WithNegation_ShouldReturnResults()
+    {
+        const string indexName = "test-ismatch-not";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create index and upload documents
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        // Act - Use NOT to exclude search.ismatch results
+        var options = new SearchOptions
+        {
+            Filter = "not search.ismatch('keyboard')",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        // Assert
+        Assert.NotNull(results);
+        var resultsList = results.Value.GetResultsAsync();
+        var items = await resultsList.ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.True(items.All(r => !r.Document.Name.Contains("Keyboard", StringComparison.OrdinalIgnoreCase) &&
+                                   !r.Document.Description.Contains("Keyboard", StringComparison.OrdinalIgnoreCase)),
+            "All results should NOT contain 'keyboard'");
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_SearchIsMatchScoring_ShouldReturnResults()
+    {
+        const string indexName = "test-ismatchscoring";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create index and upload documents
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        // Act - Use search.ismatchscoring (scoring variant)
+        var options = new SearchOptions
+        {
+            Filter = "search.ismatchscoring('laptop')",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        // Assert
+        Assert.NotNull(results);
+        var resultsList = results.Value.GetResultsAsync();
+        var items = await resultsList.ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.True(items.Any(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
+            "Should return documents with 'laptop'");
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
     // Helper Methods
 
     private static async Task<SearchIndex> CreateIndexAsync(SearchIndexClient indexClient, string indexName)
