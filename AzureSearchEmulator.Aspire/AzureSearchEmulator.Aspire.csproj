@@ -1,0 +1,39 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>F23.Aspire.Hosting.AzureSearchEmulator</RootNamespace>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <LangVersion>14</LangVersion>
+        <PackageId>F23.Aspire.Hosting.AzureSearchEmulator</PackageId>
+        <PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+        <RepositoryUrl>https://github.com/feature23/azuresearchemulator</RepositoryUrl>
+        <PackageTags>azure search emulator ai hosting docker</PackageTags>
+        <Description>Azure Search Emulator hosting support for Aspire.</Description>
+        <IsPackable>true</IsPackable>
+        <Version>1.0.0-beta</Version>
+        <Company>feature[23]</Company>
+        <Copyright>Copyright (c) feature[23] 2025</Copyright>
+        <Authors>Paul Irwin</Authors>
+        <PackageIcon>logo.png</PackageIcon>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="AzureSearchEmulator.Aspire.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Aspire.Hosting" Version="13.0.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="../logo.png" Pack="true" PackagePath="\" />
+        <None Include="../README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+</Project>

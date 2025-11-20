@@ -9,10 +9,10 @@ COPY ["AzureSearchEmulator/AzureSearchEmulator.csproj", "AzureSearchEmulator/"]
 RUN dotnet restore "AzureSearchEmulator/AzureSearchEmulator.csproj"
 COPY . .
 WORKDIR "/src/AzureSearchEmulator"
-RUN dotnet build "AzureSearchEmulator.csproj" -c Release -o /app/build
+RUN dotnet build --no-restore "AzureSearchEmulator.csproj" -c Release -o /app/build
 
 FROM build AS publish
-RUN dotnet publish "AzureSearchEmulator.csproj" -c Release -o /app/publish
+RUN dotnet publish --no-restore "AzureSearchEmulator.csproj" -c Release -o /app/publish
 
 FROM base AS final
 WORKDIR /app
