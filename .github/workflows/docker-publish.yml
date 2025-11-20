@@ -12,8 +12,8 @@ on:
     branches: [ main ]
     # Publish semver tags as releases.
     tags: [ 'v*.*.*', 'latest' ]
-  # pull_request:
-    # branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -61,7 +61,7 @@ jobs:
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        uses: docker/metadata-action@318604b99e75e41977312d83839a89be02ca4893 # v5.9.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -79,6 +79,7 @@ jobs:
         uses: docker/build-push-action@ac9327eae2b366085ac7f6a2d02df8aa8ead720a
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
