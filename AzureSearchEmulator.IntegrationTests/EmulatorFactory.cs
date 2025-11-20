@@ -14,7 +14,7 @@ namespace AzureSearchEmulator.IntegrationTests;
 /// </summary>
 public class EmulatorFactory : IAsyncLifetime
 {
-    private const int HttpsPort = 5081;
+    private readonly int _httpsPort = Random.Shared.Next(5000, 60000);
 
     private IContainer? _container;
 
@@ -36,19 +36,19 @@ public class EmulatorFactory : IAsyncLifetime
 
         _container = new ContainerBuilder()
             .WithImage(image)
-            .WithPortBinding(HttpsPort, HttpsPort)
-            .WithEnvironment("ASPNETCORE_URLS", $"https://+:{HttpsPort}")
-            .WithEnvironment("ASPNETCORE_HTTPS_PORT", HttpsPort.ToString())
+            .WithPortBinding(_httpsPort, _httpsPort)
+            .WithEnvironment("ASPNETCORE_URLS", $"https://+:{_httpsPort}")
+            .WithEnvironment("ASPNETCORE_HTTPS_PORT", _httpsPort.ToString())
             .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Password", "password")
             .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/app/aspnetapp.pfx")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(HttpsPort))
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(_httpsPort)) // NOTE: we cannot use HTTP wait strategy due to self-signed cert
             .Build();
 
         await image.CreateAsync();
         await _container.StartAsync();
 
         // Get the mapped HTTPS port
-        var mappedPort = _container.GetMappedPublicPort(HttpsPort);
+        var mappedPort = _container.GetMappedPublicPort(_httpsPort);
         Endpoint = new Uri($"https://localhost:{mappedPort}");
     }
 
@@ -63,12 +63,12 @@ public class EmulatorFactory : IAsyncLifetime
     public SearchIndexClient CreateSearchIndexClient()
     {
         var handler = new HttpClientHandler();
-        // Allow untrusted certificates for testing
+        // Allow untrusted certificates for testing. This is safe in test environments only, not for production use.
         handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
 
         var options = new SearchClientOptions
         {
-            Transport = new HttpClientTransport(new HttpClient(handler)),
+            Transport = new HttpClientTransport(handler),
             Retry = { MaxRetries = 1 } // Reduce retries to speed up tests
         };
 
@@ -81,12 +81,12 @@ public class EmulatorFactory : IAsyncLifetime
     public SearchClient CreateSearchClient(string indexName)
     {
         var handler = new HttpClientHandler();
-        // Allow untrusted certificates for testing
+        // Allow untrusted certificates for testing. This is safe in test environments only, not for production use.
         handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
 
         var options = new SearchClientOptions
         {
-            Transport = new HttpClientTransport(new HttpClient(handler)),
+            Transport = new HttpClientTransport(handler),
             Retry = { MaxRetries = 1 } // Reduce retries to speed up tests
         };
 

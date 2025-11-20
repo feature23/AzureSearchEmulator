@@ -9,14 +9,14 @@ const string endpoint = "https://localhost:5123";
 const string indexName = "test-index";
 
 var handler = new HttpClientHandler();
+// Skip SSL validation for local emulator (self-signed cert). This is safe in test environments only, not for production use.
 handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
 
-var httpClient = new HttpClient(handler);
 var credential = new AzureKeyCredential("test-key");
 
 var options = new SearchClientOptions
 {
-    Transport = new Azure.Core.Pipeline.HttpClientTransport(httpClient),
+    Transport = new HttpClientTransport(handler),
     Retry = { MaxRetries = 1 }
 };
 

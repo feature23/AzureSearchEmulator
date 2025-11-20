@@ -44,6 +44,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         }
         catch (DirectoryNotFoundException)
         {
+            // If we've come this far, the index exists, but has no documents, so it's okay to return 0
             return Task.FromResult(0);
         }
     }
