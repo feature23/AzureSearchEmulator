@@ -63,7 +63,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             });
         }
 
-        var filter = GetFilterFromRequest(request);
+        var filter = GetFilterFromRequest(request, index);
 
         var sort = GetSortFromRequest(index, request);
 
@@ -216,7 +216,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         };
     }
 
-    private static Filter? GetFilterFromRequest(SearchRequest request)
+    private static Filter? GetFilterFromRequest(SearchRequest request, SearchIndex? index = null)
     {
         if (string.IsNullOrEmpty(request.Filter))
         {
@@ -231,7 +231,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             return null;
         }
 
-        var query = filterQuery.Accept(new ODataQueryVisitor());
+        var query = filterQuery.Accept(new ODataQueryVisitor(index));
 
         return new QueryWrapperFilter(query);
     }
