@@ -1,11 +1,29 @@
-﻿using Azure;
+﻿using System.Globalization;
+using Azure;
 using Azure.Core.Pipeline;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Indexes;
 using Azure.Search.Documents.Indexes.Models;
 using Azure.Search.Documents.Models;
 
-const string endpoint = "https://localhost:5123";
+int port = 5123;
+
+if (args.Length > 0 && int.TryParse(args[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var argPort))
+{
+    port = argPort;
+}
+else
+{
+    Console.WriteLine("Enter HTTPS port number for Azure Search Emulator (default 5123): ");
+    var portInput = Console.ReadLine();
+    if (!string.IsNullOrWhiteSpace(portInput) && int.TryParse(portInput, NumberStyles.Integer,
+            CultureInfo.InvariantCulture, out var parsedPort))
+    {
+        port = parsedPort;
+    }
+}
+
+string endpoint = $"https://localhost:{port}";
 const string indexName = "test-index";
 
 var handler = new HttpClientHandler();

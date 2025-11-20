@@ -1,0 +1,16 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.0.0">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <UserSecretsId>e92d4b6e-a95b-491f-9fe2-8c8ecb4be28f</UserSecretsId>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\AzureSearchEmulator.Aspire\AzureSearchEmulator.Aspire.csproj" IsAspireProjectResource="false" />
+      <ProjectReference Include="..\AzureSearchEmulator\AzureSearchEmulator.csproj" />
+    </ItemGroup>
+
+</Project>

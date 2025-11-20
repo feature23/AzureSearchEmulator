@@ -8,6 +8,7 @@
 		<Version>1.0.0-beta</Version>
 		<WarningsAsErrors>Nullable</WarningsAsErrors>
 		<LangVersion>14</LangVersion>
+		<IsPackable>false</IsPackable>
 	</PropertyGroup>
 
 	<ItemGroup>
