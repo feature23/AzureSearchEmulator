@@ -13,7 +13,7 @@
         <PackageTags>azure search emulator ai hosting docker</PackageTags>
         <Description>Azure Search Emulator hosting support for Aspire.</Description>
         <IsPackable>true</IsPackable>
-        <Version>1.0.0-beta</Version>
+        <Version>1.0.0-beta.2</Version>
         <Company>feature[23]</Company>
         <Copyright>Copyright (c) feature[23] 2025</Copyright>
         <Authors>Paul Irwin</Authors>
@@ -33,7 +33,7 @@
 
     <ItemGroup>
         <None Include="../logo.png" Pack="true" PackagePath="\" />
-        <None Include="../README.md" Pack="true" PackagePath="\" />
+        <None Include="README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 
 </Project>
