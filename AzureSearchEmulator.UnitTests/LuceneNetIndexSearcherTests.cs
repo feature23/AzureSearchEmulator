@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
 using AzureSearchEmulator.Searching;
@@ -922,6 +924,135 @@ public class LuceneNetIndexSearcher_GuidFilterTests : IDisposable
     }
 
     private class StubIndexReaderFactory(Lucene.Net.Store.Directory directory) : ILuceneIndexReaderFactory
+    {
+        public IndexReader GetIndexReader(string indexName) => DirectoryReader.Open(directory);
+        public IndexReader RefreshReader(string indexName) => GetIndexReader(indexName);
+        public void ClearCachedReader(string indexName) { }
+    }
+}
+
+/// <summary>
+/// Tests covering filter behavior for string fields indexed through the real
+/// SearchFieldExtensions.CreateField path (which applies the per-field analyzer),
+/// exercising combinations of Searchable and Filterable. See issue #27.
+/// </summary>
+public class LuceneNetIndexSearcher_SearchableFilterableTests
+{
+    private static (LuceneTestHelper helper, LuceneNetIndexSearcher searcher) Build(SearchIndex index, List<JsonObject> docs)
+    {
+        var luceneDocs = docs.Select(d =>
+        {
+            var doc = new Lucene.Net.Documents.Document();
+            foreach (var field in index.Fields)
+            {
+                if (d[field.Name] is { } value)
+                {
+                    foreach (var f in field.CreateFields(value))
+                    {
+                        doc.Add(f);
+                    }
+                }
+            }
+            return doc;
+        }).ToList();
+
+        var helper = new LuceneTestHelper(index, luceneDocs);
+        var searcher = new LuceneNetIndexSearcher(new StubReaderFactory(helper.Directory));
+        return (helper, searcher);
+    }
+
+    [Fact]
+    public async Task Filter_StringEquality_SearchableAndFilterable_ReturnsMatch()
+    {
+        var index = new SearchIndex
+        {
+            Name = "products",
+            Fields =
+            [
+                new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = false, Filterable = true },
+                new SearchField { Name = "Category", Type = "Edm.String", Searchable = true, Filterable = true },
+            ]
+        };
+        var docs = new List<JsonObject>
+        {
+            new() { ["Id"] = "1", ["Category"] = "Electronics" },
+            new() { ["Id"] = "2", ["Category"] = "Books" },
+        };
+        var (helper, searcher) = Build(index, docs);
+        using var _ = helper;
+
+        var response = await searcher.Search(index, new SearchRequest
+        {
+            Search = "*",
+            Filter = "Category eq 'Electronics'",
+            Top = 50
+        });
+
+        Assert.Single(response.Results);
+        Assert.Equal("1", response.Results[0]["Id"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Filter_StringEquality_Defaults_ReturnsMatch()
+    {
+        // Mirrors the bug reported in issue #27: fields where Searchable and Filterable
+        // are unset (both default to true for Edm.String) must still filter correctly.
+        var index = new SearchIndex
+        {
+            Name = "products",
+            Fields =
+            [
+                new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = true, Filterable = true },
+                new SearchField { Name = "Category", Type = "Edm.String" },
+            ]
+        };
+        var docs = new List<JsonObject>
+        {
+            new() { ["Id"] = "1", ["Category"] = "Electronics" },
+            new() { ["Id"] = "2", ["Category"] = "Books" },
+        };
+        var (helper, searcher) = Build(index, docs);
+        using var _ = helper;
+
+        var response = await searcher.Search(index, new SearchRequest
+        {
+            Search = "*",
+            Filter = "Category eq 'Electronics'",
+            Top = 50
+        });
+
+        Assert.Single(response.Results);
+        Assert.Equal("1", response.Results[0]["Id"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task Filter_StringEquality_SearchableNotFilterable_ShouldError()
+    {
+        var index = new SearchIndex
+        {
+            Name = "posts",
+            Fields =
+            [
+                new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = false, Filterable = true },
+                new SearchField { Name = "Body", Type = "Edm.String", Searchable = true, Filterable = false },
+            ]
+        };
+        var docs = new List<JsonObject>
+        {
+            new() { ["Id"] = "1", ["Body"] = "Hello world" },
+        };
+        var (helper, searcher) = Build(index, docs);
+        using var _ = helper;
+
+        await Assert.ThrowsAnyAsync<Exception>(() => searcher.Search(index, new SearchRequest
+        {
+            Search = "*",
+            Filter = "Body eq 'Hello world'",
+            Top = 50
+        }));
+    }
+
+    private class StubReaderFactory(Lucene.Net.Store.Directory directory) : ILuceneIndexReaderFactory
     {
         public IndexReader GetIndexReader(string indexName) => DirectoryReader.Open(directory);
         public IndexReader RefreshReader(string indexName) => GetIndexReader(indexName);

@@ -33,7 +33,8 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
         return from f in index.Fields
             join v in Item on f.Name equals v.Key
             where v.Value != null
-            select f.CreateField(v.Value!); // [!]: null checked by where clause
+            from indexField in f.CreateFields(v.Value!) // [!]: null checked by where clause
+            select indexField;
     }
 
     protected static void MergeDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields, bool uploadIfMissing)
@@ -50,15 +51,13 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
 
         var doc = docs.TotalHits == 0 ? new Document() : searcher.Doc(docs.ScoreDocs[0].Doc);
 
-        foreach (var docField in docFields)
+        var materialized = docFields.ToList();
+        foreach (var name in materialized.Select(f => f.Name).Distinct())
         {
-            var field = doc.GetField(docField.Name);
-
-            if (field != null)
-            {
-                doc.RemoveField(docField.Name);
-            }
-
+            doc.RemoveFields(name);
+        }
+        foreach (var docField in materialized)
+        {
             doc.Add(docField);
         }
 
