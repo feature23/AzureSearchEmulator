@@ -150,6 +150,90 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
     }
 
     [Fact]
+    public async Task SearchDocuments_WithFilter_OnSearchableStringField_ShouldReturnResults()
+    {
+        // Regression test for issue #27: filtering a Searchable+Filterable string field
+        // must work. Before the fix, the analyzer lowercased 'Electronics' at index time
+        // and the exact TermQuery at filter time found zero hits.
+        const string indexName = "test-filter-searchable-string";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        var options = new SearchOptions
+        {
+            Filter = "Category eq 'Electronics'",
+            Size = 50
+        };
+        var results = await searchClient.SearchAsync<Product>("*", options);
+
+        Assert.NotNull(results);
+        var items = await results.Value.GetResultsAsync().ToListAsync();
+        Assert.NotEmpty(items);
+        Assert.True(items.All(r => r.Document.Category == "Electronics"),
+            "All results should have Category = Electronics");
+
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_SearchOnDualIndexedField_StillMatchesAnalyzedTokens()
+    {
+        // Dual-indexing (TextField + StringField under same name) must not break
+        // full-text search: a tokenized search for 'electronics' must still match.
+        const string indexName = "test-search-on-dual-indexed";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        var options = new SearchOptions { SearchFields = { "Category" }, Size = 50 };
+        var results = await searchClient.SearchAsync<Product>("electronics", options);
+        var items = await results.Value.GetResultsAsync().ToListAsync();
+
+        Assert.NotEmpty(items);
+        Assert.True(items.All(r => r.Document.Category == "Electronics"));
+
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task SearchDocuments_FilterOnNonFilterableField_ShouldError()
+    {
+        // Azure rejects $filter against a non-filterable field; the emulator should too.
+        const string indexName = "test-filter-nonfilterable";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        var index = new SearchIndex(indexName)
+        {
+            Fields =
+            [
+                new SearchField(nameof(Product.Id), SearchFieldDataType.String) { IsKey = true, IsStored = true, IsSearchable = true, IsFilterable = true },
+                new SearchField(nameof(Product.Name), SearchFieldDataType.String) { IsSearchable = true, IsFilterable = false, IsStored = true },
+                new SearchField(nameof(Product.Description), SearchFieldDataType.String) { IsSearchable = true, IsStored = true },
+                new SearchField(nameof(Product.Price), SearchFieldDataType.Double) { IsFilterable = true, IsSortable = true, IsStored = true },
+                new SearchField(nameof(Product.Category), SearchFieldDataType.String) { IsSearchable = true, IsFilterable = true, IsStored = true },
+                new SearchField(nameof(Product.InStock), SearchFieldDataType.Boolean) { IsFilterable = true, IsStored = true }
+            ]
+        };
+        await indexClient.CreateIndexAsync(index);
+        await UploadDocumentsAsync(searchClient);
+
+        var options = new SearchOptions { Filter = "Name eq 'Laptop Pro 15'", Size = 50 };
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            var results = await searchClient.SearchAsync<Product>("*", options);
+            await results.Value.GetResultsAsync().ToListAsync();
+        });
+
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
     public async Task SearchDocuments_WithSorting_ShouldReturnSortedResults()
     {
         const string indexName = "test-sort-search";
@@ -464,7 +548,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
                 new SearchField(nameof(Product.Name), SearchFieldDataType.String) { IsSearchable = true, IsStored = true },
                 new SearchField(nameof(Product.Description), SearchFieldDataType.String) { IsSearchable = true, IsStored = true},
                 new SearchField(nameof(Product.Price), SearchFieldDataType.Double) { IsFilterable = true, IsSortable = true, IsStored = true },
-                new SearchField(nameof(Product.Category), SearchFieldDataType.String) { IsFilterable = true, IsStored = true },
+                new SearchField(nameof(Product.Category), SearchFieldDataType.String) { IsSearchable = true, IsFilterable = true, IsStored = true },
                 new SearchField(nameof(Product.InStock), SearchFieldDataType.Boolean) { IsFilterable = true, IsStored = true }
             ]
         };

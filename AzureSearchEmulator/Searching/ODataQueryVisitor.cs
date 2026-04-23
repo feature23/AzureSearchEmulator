@@ -48,6 +48,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
                 Right: LiteralToken literalToken
             })
         {
+            EnsureFilterable(path);
             return tokenIn.OperatorKind switch
             {
                 BinaryOperatorKind.Equal => HandleEqualComparison(path, literalToken),
@@ -67,6 +68,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
                 Right: LiteralToken negatedLiteral
             })
         {
+            EnsureFilterable(negatedPath);
             var equalQuery = tokenIn.OperatorKind switch
             {
                 BinaryOperatorKind.Equal => HandleEqualComparison(negatedPath, negatedLiteral),
@@ -89,6 +91,17 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         }
 
         throw new NotImplementedException();
+    }
+
+    private void EnsureFilterable(string path)
+    {
+        if (_index is null) return;
+        var field = _index.Fields.FirstOrDefault(f => string.Equals(f.Name, path, StringComparison.OrdinalIgnoreCase));
+        if (field is null) return;
+        if (!field.Filterable)
+        {
+            throw new InvalidOperationException($"Field '{field.Name}' is not filterable.");
+        }
     }
 
     private static Occur GetOccurFromOperator(BinaryOperatorKind operatorKind)
