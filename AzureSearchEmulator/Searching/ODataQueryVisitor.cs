@@ -60,6 +60,34 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             };
         }
 
+        // Handle "not field eq value" which OData parses as "(not field) eq value"
+        if (tokenIn is
+            {
+                Left: UnaryOperatorToken { OperatorKind: UnaryOperatorKind.Not, Operand: EndPathToken { Identifier: string negatedPath } },
+                Right: LiteralToken negatedLiteral
+            })
+        {
+            var equalQuery = tokenIn.OperatorKind switch
+            {
+                BinaryOperatorKind.Equal => HandleEqualComparison(negatedPath, negatedLiteral),
+                BinaryOperatorKind.LessThan => HandleLessThanComparison(negatedPath, negatedLiteral),
+                BinaryOperatorKind.LessThanOrEqual => HandleLessThanOrEqualComparison(negatedPath, negatedLiteral),
+                BinaryOperatorKind.GreaterThan => HandleGreaterThanComparison(negatedPath, negatedLiteral),
+                BinaryOperatorKind.GreaterThanOrEqual => HandleGreaterThanOrEqualComparison(negatedPath, negatedLiteral),
+                BinaryOperatorKind.NotEqual => HandleNotEqualComparison(negatedPath, negatedLiteral),
+                _ => throw new NotImplementedException($"Operator {tokenIn.OperatorKind} not implemented")
+            };
+
+            return new BooleanQuery
+            {
+                Clauses =
+                {
+                    new BooleanClause(new MatchAllDocsQuery(), Occur.MUST),
+                    new BooleanClause(equalQuery, Occur.MUST_NOT)
+                }
+            };
+        }
+
         throw new NotImplementedException();
     }
 
@@ -80,8 +108,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             string stringValue => new TermQuery(new Term(path, stringValue)),
             int intValue => NumericRangeQuery.NewInt32Range(path, intValue, intValue, true, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, longValue, longValue, true, true),
-            float floatValue => NumericRangeQuery.NewSingleRange(path, floatValue, floatValue, true, true),
+            float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, (double)floatValue, true, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, doubleValue, doubleValue, true, true),
+            decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, (double)decimalValue, (double)decimalValue, true, true),
             bool boolValue => NumericRangeQuery.NewInt32Range(path, boolValue ? 1 : 0, boolValue ? 1 : 0, true, true),
             _ => throw new NotImplementedException()
         };
@@ -93,8 +122,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         {
             int intValue => NumericRangeQuery.NewInt32Range(path, int.MinValue, intValue, true, false),
             long longValue => NumericRangeQuery.NewInt64Range(path, long.MinValue, longValue, true, false),
-            float floatValue => NumericRangeQuery.NewSingleRange(path, float.NegativeInfinity, floatValue, true, false),
+            float floatValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)floatValue, true, false),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, doubleValue, true, false),
+            decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)decimalValue, true, false),
             _ => throw new NotImplementedException($"Less than comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
@@ -105,8 +135,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         {
             int intValue => NumericRangeQuery.NewInt32Range(path, int.MinValue, intValue, true, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, long.MinValue, longValue, true, true),
-            float floatValue => NumericRangeQuery.NewSingleRange(path, float.NegativeInfinity, floatValue, true, true),
+            float floatValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)floatValue, true, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, doubleValue, true, true),
+            decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)decimalValue, true, true),
             _ => throw new NotImplementedException($"Less than or equal comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
@@ -117,8 +148,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         {
             int intValue => NumericRangeQuery.NewInt32Range(path, intValue, int.MaxValue, false, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, longValue, long.MaxValue, false, true),
-            float floatValue => NumericRangeQuery.NewSingleRange(path, floatValue, float.PositiveInfinity, false, true),
+            float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, double.PositiveInfinity, false, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, doubleValue, double.PositiveInfinity, false, true),
+            decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, (double)decimalValue, double.PositiveInfinity, false, true),
             _ => throw new NotImplementedException($"Greater than comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
@@ -129,8 +161,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         {
             int intValue => NumericRangeQuery.NewInt32Range(path, intValue, int.MaxValue, true, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, longValue, long.MaxValue, true, true),
-            float floatValue => NumericRangeQuery.NewSingleRange(path, floatValue, float.PositiveInfinity, true, true),
+            float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, double.PositiveInfinity, true, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, doubleValue, double.PositiveInfinity, true, true),
+            decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, (double)decimalValue, double.PositiveInfinity, true, true),
             _ => throw new NotImplementedException($"Greater than or equal comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
