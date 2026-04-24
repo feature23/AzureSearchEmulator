@@ -72,7 +72,7 @@ public class IndexesController(
         // Strip quotes that may be captured from OData-style URLs
         key = key.Trim('\'');
 
-        // HACK.PI: For some reason, having this as a parameter with [FromBody] fails to deserialize properly.
+        // HACK.JS: For some reason, having this as a parameter with [FromBody] fails to deserialize properly.
         using var sr = new StreamReader(Request.Body);
         var indexJson = await sr.ReadToEndAsync();
         var index = JsonSerializer.Deserialize<SearchIndex>(indexJson, jsonSerializerOptions);
