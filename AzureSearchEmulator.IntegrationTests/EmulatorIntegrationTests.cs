@@ -320,6 +320,78 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
     }
 
     [Fact]
+    public async Task CreateOrUpdateIndex_WhenIndexDoesNotExist_ShouldCreate()
+    {
+        // Arrange
+        const string indexName = "test-createorupdate-create";
+        var indexClient = factory.CreateSearchIndexClient();
+
+        // Ensure a clean slate
+        try
+        {
+            await indexClient.DeleteIndexAsync(indexName);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            // expected
+        }
+
+        var index = new SearchIndex(indexName)
+        {
+            Fields =
+            [
+                new SearchField(nameof(Product.Id), SearchFieldDataType.String) { IsKey = true, IsStored = true, IsSearchable = true, IsFilterable = true },
+                new SearchField(nameof(Product.Name), SearchFieldDataType.String) { IsSearchable = true, IsStored = true }
+            ]
+        };
+
+        // Act - PUT to a non-existent index should create it
+        var result = await indexClient.CreateOrUpdateIndexAsync(index);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(indexName, result.Value.Name);
+
+        var retrieved = await indexClient.GetIndexAsync(indexName);
+        Assert.NotNull(retrieved);
+        Assert.Equal(indexName, retrieved.Value.Name);
+        Assert.Equal(2, retrieved.Value.Fields.Count);
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task CreateOrUpdateIndex_WhenIndexExists_ShouldUpdateSchema()
+    {
+        // Arrange
+        const string indexName = "test-createorupdate-update";
+        var indexClient = factory.CreateSearchIndexClient();
+
+        await CreateIndexAsync(indexClient, indexName);
+
+        // Pull the current index and add a backward-compatible field
+        var existing = (await indexClient.GetIndexAsync(indexName)).Value;
+        var originalFieldCount = existing.Fields.Count;
+
+        existing.Fields.Add(new SearchField("Tags", SearchFieldDataType.String) { IsFilterable = true, IsStored = true });
+
+        // Act - PUT on an existing index should update its schema
+        var result = await indexClient.CreateOrUpdateIndexAsync(existing);
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(indexName, result.Value.Name);
+
+        var retrieved = await indexClient.GetIndexAsync(indexName);
+        Assert.Equal(originalFieldCount + 1, retrieved.Value.Fields.Count);
+        Assert.Contains(retrieved.Value.Fields, f => f.Name == "Tags");
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
     public async Task DeleteIndex_ShouldSucceed()
     {
         const string indexName = "test-delete-index";

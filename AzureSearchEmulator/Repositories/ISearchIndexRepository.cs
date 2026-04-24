@@ -10,5 +10,7 @@ public interface ISearchIndexRepository
 
     Task Create(SearchIndex index);
 
+    Task Update(SearchIndex index);
+
     Task<bool> Delete(SearchIndex index);
 }
