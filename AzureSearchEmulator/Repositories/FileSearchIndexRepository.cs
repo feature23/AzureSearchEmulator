@@ -62,6 +62,20 @@ public class FileSearchIndexRepository(JsonSerializerOptions jsonSerializerOptio
         return WriteAllTextAsync(file, json);
     }
 
+    public Task Update(SearchIndex index)
+    {
+        if (!Directory.Exists(_options.IndexesDirectory))
+        {
+            Directory.CreateDirectory(_options.IndexesDirectory);
+        }
+
+        string file = GetIndexFileName(index.Name);
+
+        string json = JsonSerializer.Serialize(index, jsonSerializerOptions);
+
+        return WriteAllTextAsync(file, json);
+    }
+
     public Task<bool> Delete(SearchIndex index)
     {
         if (!Directory.Exists(_options.IndexesDirectory))

@@ -64,6 +64,47 @@ public class IndexesController(
         return Created(index);
     }
 
+    [HttpPut]
+    [Route("indexes({key})")]
+    [Route("indexes/{key}")]
+    public async Task<IActionResult> Put(string key)
+    {
+        // Strip quotes that may be captured from OData-style URLs
+        key = key.Trim('\'');
+
+        // HACK.PI: For some reason, having this as a parameter with [FromBody] fails to deserialize properly.
+        using var sr = new StreamReader(Request.Body);
+        var indexJson = await sr.ReadToEndAsync();
+        var index = JsonSerializer.Deserialize<SearchIndex>(indexJson, jsonSerializerOptions);
+
+        if (index == null || !ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (!string.Equals(index.Name, key, StringComparison.OrdinalIgnoreCase))
+        {
+            ModelState.AddModelError(nameof(index.Name), "The index name in the request body must match the name in the URL.");
+            return BadRequest(ModelState);
+        }
+
+        var existing = await searchIndexRepository.Get(key);
+
+        if (existing == null)
+        {
+            await searchIndexRepository.Create(index);
+            return Created(index);
+        }
+
+        await searchIndexRepository.Update(index);
+
+        // Clear cached Lucene resources so schema changes take effect
+        luceneIndexReaderFactory.ClearCachedReader(index.Name);
+        luceneDirectoryFactory.ClearCachedDirectory(index.Name);
+
+        return Ok(index);
+    }
+
     [HttpDelete]
     [Route("indexes({key})")]
     [Route("indexes/{key}")]
