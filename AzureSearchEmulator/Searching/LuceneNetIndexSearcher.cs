@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Nodes;
+using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
 using Lucene.Net.Analysis;
@@ -194,6 +195,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     private static SortFieldType GetSortFieldType(SearchField field)
     {
+        // Collection fields are not directly sortable in Azure Search; fall through to error.
         return field.Type switch
         {
             "Edm.String" => SortFieldType.STRING,
@@ -204,15 +206,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             "Edm.DateTimeOffset" => SortFieldType.INT64,
             "Edm.GeographyPoint" => throw new NotImplementedException(),
             "Edm.ComplexType" => throw new NotImplementedException(),
-            "Collection(Edm.String)" => throw new NotImplementedException(),
-            "Collection(Edm.Int32)" => throw new NotImplementedException(),
-            "Collection(Edm.Int64)" => throw new NotImplementedException(),
-            "Collection(Edm.Double)" => throw new NotImplementedException(),
-            "Collection(Edm.Boolean)" => throw new NotImplementedException(),
-            "Collection(Edm.DateTimeOffset)" => throw new NotImplementedException(),
-            "Collection(Edm.GeographyPoint)" => throw new NotImplementedException(),
-            "Collection(Edm.ComplexType)" => throw new NotImplementedException(),
-            _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
+            _ => throw new InvalidOperationException($"Unsupported field type {field.Type} for sorting")
         };
     }
 
@@ -333,6 +327,16 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         foreach (var field in index.Fields.Where(i => i.Retrievable))
         {
+            if (field.IsCollection())
+            {
+                var storedJson = doc.Get(SearchFieldExtensions.GetCollectionStorageFieldName(field.Name));
+                if (storedJson != null)
+                {
+                    result[field.Name] = JsonNode.Parse(storedJson);
+                }
+                continue;
+            }
+
             var docField = doc.GetField(field.Name);
 
             if (docField != null)
@@ -347,14 +351,6 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                     "Edm.DateTimeOffset" => docField.GetInt64Value() is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null,
                     "Edm.GeographyPoint" => throw new NotImplementedException(),
                     "Edm.ComplexType" => throw new NotImplementedException(),
-                    "Collection(Edm.String)" => throw new NotImplementedException(),
-                    "Collection(Edm.Int32)" => throw new NotImplementedException(),
-                    "Collection(Edm.Int64)" => throw new NotImplementedException(),
-                    "Collection(Edm.Double)" => throw new NotImplementedException(),
-                    "Collection(Edm.Boolean)" => throw new NotImplementedException(),
-                    "Collection(Edm.DateTimeOffset)" => throw new NotImplementedException(),
-                    "Collection(Edm.GeographyPoint)" => throw new NotImplementedException(),
-                    "Collection(Edm.ComplexType)" => throw new NotImplementedException(),
                     _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
                 };
             }
