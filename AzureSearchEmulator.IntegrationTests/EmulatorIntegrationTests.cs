@@ -598,7 +598,172 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await indexClient.DeleteIndexAsync(indexName);
     }
 
+    // Collection field tests (issue #6)
+
+    [Fact]
+    public async Task CollectionField_UploadAndGet_ReturnsArrayValues()
+    {
+        const string indexName = "test-collection-roundtrip";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateTaggedProductIndexAsync(indexClient, indexName);
+        await UploadTaggedProductsAsync(searchClient);
+
+        var doc = await searchClient.GetDocumentAsync<TaggedProduct>("1");
+
+        Assert.NotNull(doc.Value);
+        Assert.Equal("1", doc.Value.Id);
+        Assert.Equal(new[] { "red", "cotton", "shirt" }, doc.Value.Tags);
+        Assert.Equal(new[] { 8, 10, 12 }, doc.Value.Sizes);
+
+        await indexClient.DeleteIndexAsync(indexName);
+    }
+
+    [Fact]
+    public async Task CollectionField_FilterAnyEqual_ReturnsMatchingDocuments()
+    {
+        const string indexName = "test-collection-any-eq";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateTaggedProductIndexAsync(indexClient, indexName);
+        await UploadTaggedProductsAsync(searchClient);
+
+        var options = new SearchOptions { Filter = "Tags/any(t: t eq 'cotton')", Size = 50 };
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+            .Select(r => r.Document.Id)
+            .OrderBy(id => id)
+            .ToList();
+
+        // Doc 1 (Red Shirt) and doc 4 (Green Socks) both have 'cotton' in their tags.
+        Assert.Equal(["1", "4"], ids);
+    }
+
+    [Fact]
+    public async Task CollectionField_FilterAnySearchIn_ReturnsMatchingDocuments()
+    {
+        const string indexName = "test-collection-any-searchin";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateTaggedProductIndexAsync(indexClient, indexName);
+        await UploadTaggedProductsAsync(searchClient);
+
+        var options = new SearchOptions { Filter = "Tags/any(t: search.in(t, 'wool,denim'))", Size = 50 };
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+            .Select(r => r.Document.Id)
+            .OrderBy(id => id)
+            .ToList();
+
+        Assert.Equal(["2", "3"], ids);
+    }
+
+    [Fact]
+    public async Task CollectionField_FilterAllNotEqual_ExcludesDocsContainingValue()
+    {
+        const string indexName = "test-collection-all-ne";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateTaggedProductIndexAsync(indexClient, indexName);
+        await UploadTaggedProductsAsync(searchClient);
+
+        // all(t: t ne 'cotton') — only docs whose tags do NOT contain 'cotton' should match.
+        // Doc 1 and doc 4 contain 'cotton', so only doc 2 (jeans) and doc 3 (hat) should match.
+        var options = new SearchOptions { Filter = "Tags/all(t: t ne 'cotton')", Size = 50 };
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+            .Select(r => r.Document.Id)
+            .OrderBy(id => id)
+            .ToList();
+
+        Assert.Equal(["2", "3"], ids);
+    }
+
+    [Fact]
+    public async Task CollectionField_FilterAnyNumericRange_MatchesDocsWithAnyValueInRange()
+    {
+        const string indexName = "test-collection-any-numeric";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateTaggedProductIndexAsync(indexClient, indexName);
+        await UploadTaggedProductsAsync(searchClient);
+
+        // Doc 1 has Sizes [8,10,12] — 12 is >= 12. Doc 2 has Sizes [30,32,34] — all >= 12.
+        var options = new SearchOptions { Filter = "Sizes/any(s: s ge 12)", Size = 50 };
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+            .Select(r => r.Document.Id)
+            .OrderBy(id => id)
+            .ToList();
+
+        Assert.Equal(["1", "2"], ids);
+    }
+
+    [Fact]
+    public async Task CollectionField_FullTextSearchOnSearchableCollection_MatchesAcrossElements()
+    {
+        const string indexName = "test-collection-fulltext";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateTaggedProductIndexAsync(indexClient, indexName);
+        await UploadTaggedProductsAsync(searchClient);
+
+        // Tags is searchable; a free-text search for 'denim' should match doc 2 even though
+        // 'denim' is just one entry in its tags array.
+        var options = new SearchOptions { SearchFields = { "Tags" }, Size = 50 };
+        var results = await searchClient.SearchAsync<TaggedProduct>("denim", options);
+        var items = await results.Value.GetResultsAsync().ToListAsync();
+
+        Assert.Single(items);
+        Assert.Equal("2", items[0].Document.Id);
+    }
+
     // Helper Methods
+
+    private static async Task<SearchIndex> CreateTaggedProductIndexAsync(SearchIndexClient indexClient, string indexName)
+    {
+        try
+        {
+            await indexClient.DeleteIndexAsync(indexName);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            // expected
+        }
+
+        var index = new SearchIndex(indexName)
+        {
+            Fields =
+            [
+                new SearchField(nameof(TaggedProduct.Id), SearchFieldDataType.String) { IsKey = true, IsStored = true, IsFilterable = true },
+                new SearchField(nameof(TaggedProduct.Name), SearchFieldDataType.String) { IsSearchable = true, IsStored = true },
+                new SearchField(nameof(TaggedProduct.Tags), SearchFieldDataType.Collection(SearchFieldDataType.String)) { IsSearchable = true, IsFilterable = true, IsStored = true },
+                new SearchField(nameof(TaggedProduct.Sizes), SearchFieldDataType.Collection(SearchFieldDataType.Int32)) { IsFilterable = true, IsStored = true }
+            ]
+        };
+
+        await indexClient.CreateIndexAsync(index);
+        return index;
+    }
+
+    private static async Task UploadTaggedProductsAsync(SearchClient searchClient)
+    {
+        var documents = new List<TaggedProduct>
+        {
+            new() { Id = "1", Name = "Red Shirt", Tags = ["red", "cotton", "shirt"], Sizes = [8, 10, 12] },
+            new() { Id = "2", Name = "Blue Jeans", Tags = ["blue", "denim", "pants"], Sizes = [30, 32, 34] },
+            new() { Id = "3", Name = "Wool Hat", Tags = ["wool", "warm"], Sizes = [] },
+            new() { Id = "4", Name = "Green Socks", Tags = ["green", "cotton"], Sizes = [9, 10, 11] },
+        };
+        var batch = IndexDocumentsBatch.Upload(documents);
+        await searchClient.IndexDocumentsAsync(batch);
+    }
 
     private static async Task<SearchIndex> CreateIndexAsync(SearchIndexClient indexClient, string indexName)
     {

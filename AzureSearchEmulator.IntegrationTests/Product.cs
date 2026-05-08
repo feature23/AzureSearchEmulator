@@ -17,3 +17,18 @@ public class Product
 
     public bool InStock { get; init; }
 }
+
+/// <summary>
+/// Product model with collection fields, used to exercise Collection(Edm.*) support
+/// (issue #6) end-to-end through the Azure Search SDK.
+/// </summary>
+public class TaggedProduct
+{
+    public required string Id { get; init; }
+
+    public required string Name { get; init; }
+
+    public required string[] Tags { get; init; }
+
+    public required int[] Sizes { get; init; }
+}

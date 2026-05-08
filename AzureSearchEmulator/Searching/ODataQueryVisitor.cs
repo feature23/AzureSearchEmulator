@@ -14,14 +14,111 @@ namespace AzureSearchEmulator.Searching;
 public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisitor<Query>
 {
     private readonly SearchIndex? _index = index;
-    public Query Visit(AllToken tokenIn)
+
+    // When walking into a lambda (any/all), pushes the (path, parameter) context so that
+    // child RangeVariableTokens can be resolved back to the collection's field path.
+    private readonly Stack<LambdaContext> _lambdaContexts = new();
+
+    private record LambdaContext(string Path, string Parameter);
+
+    public Query Visit(AllToken tokenIn) => VisitLambda(tokenIn, isAll: true);
+
+    public Query Visit(AnyToken tokenIn) => VisitLambda(tokenIn, isAll: false);
+
+    private Query VisitLambda(LambdaToken tokenIn, bool isAll)
     {
-        throw new NotImplementedException();
+        var path = ResolveLambdaPath(tokenIn.Parent);
+        EnsureFilterable(path);
+
+        // any() with no expression: matches docs where the collection is non-empty.
+        // Lucene equivalent: the field must have at least one indexed term.
+        if (string.IsNullOrEmpty(tokenIn.Parameter) || tokenIn.Expression is LiteralToken { Value: bool b } && b)
+        {
+            if (isAll)
+            {
+                // all() with no body is not meaningful in OData; treat as match-all.
+                return new MatchAllDocsQuery();
+            }
+
+            // Match docs that have the field present (any indexed value).
+            return new ConstantScoreQuery(new WildcardQuery(new Term(path, "*")));
+        }
+
+        _lambdaContexts.Push(new LambdaContext(path, tokenIn.Parameter));
+        try
+        {
+            var inner = tokenIn.Expression.Accept(this);
+
+            if (!isAll)
+            {
+                // any(t: P(t)): the per-value query already matches docs where at least one
+                // indexed value satisfies P, since multi-valued fields share a field name.
+                return inner;
+            }
+
+            // all(t: P(t)) ≡ ¬any(t: ¬P(t)). Implemented as MatchAll MUST_NOT (¬P).
+            // We invert P at the leaf-comparison level so that range/term semantics still
+            // match the per-value indexing model: e.g. all(t: t ne 'x') becomes
+            // "no document has a value equal to 'x'".
+            var negated = NegateLambdaExpression(tokenIn.Expression);
+
+            return new BooleanQuery
+            {
+                Clauses =
+                {
+                    new BooleanClause(new MatchAllDocsQuery(), Occur.MUST),
+                    new BooleanClause(negated, Occur.MUST_NOT)
+                }
+            };
+        }
+        finally
+        {
+            _lambdaContexts.Pop();
+        }
     }
 
-    public Query Visit(AnyToken tokenIn)
+    private Query NegateLambdaExpression(QueryToken expression)
     {
-        throw new NotImplementedException();
+        // Logical NOT is rewritten by negating the leaf comparison so that the resulting
+        // Lucene query stays a clean "MUST_NOT P" against the multi-valued field, instead
+        // of nested boolean wrappers that produce empty result sets.
+        return expression switch
+        {
+            UnaryOperatorToken { OperatorKind: UnaryOperatorKind.Not } unary => unary.Operand.Accept(this),
+            BinaryOperatorToken bin => InvertBinary(bin),
+            _ => expression.Accept(this)
+        };
+    }
+
+    private Query InvertBinary(BinaryOperatorToken bin)
+    {
+        var inverted = bin.OperatorKind switch
+        {
+            BinaryOperatorKind.Equal => BinaryOperatorKind.NotEqual,
+            BinaryOperatorKind.NotEqual => BinaryOperatorKind.Equal,
+            BinaryOperatorKind.LessThan => BinaryOperatorKind.GreaterThanOrEqual,
+            BinaryOperatorKind.LessThanOrEqual => BinaryOperatorKind.GreaterThan,
+            BinaryOperatorKind.GreaterThan => BinaryOperatorKind.LessThanOrEqual,
+            BinaryOperatorKind.GreaterThanOrEqual => BinaryOperatorKind.LessThan,
+            _ => throw new NotImplementedException($"Cannot invert operator {bin.OperatorKind} inside all(...)")
+        };
+
+        var rebuilt = new BinaryOperatorToken(inverted, bin.Left, bin.Right);
+        return rebuilt.Accept(this);
+    }
+
+    private string ResolveLambdaPath(QueryToken? parent)
+    {
+        // Build a slash-joined path from chained InnerPathTokens; for our flat schema this
+        // is normally just the collection field's name.
+        return parent switch
+        {
+            EndPathToken end => end.Identifier,
+            InnerPathToken inner => inner.NextToken == null
+                ? inner.Identifier
+                : ResolveLambdaPath(inner.NextToken) + "/" + inner.Identifier,
+            _ => throw new NotImplementedException("Lambda parent must be a path token")
+        };
     }
 
     public Query Visit(BinaryOperatorToken tokenIn)
@@ -42,11 +139,8 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             };
         }
 
-        if (tokenIn is
-            {
-                Left: EndPathToken { Identifier: string path },
-                Right: LiteralToken literalToken
-            })
+        if (TryResolveComparisonPath(tokenIn.Left, out var path)
+            && tokenIn.Right is LiteralToken literalToken)
         {
             EnsureFilterable(path);
             return tokenIn.OperatorKind switch
@@ -64,9 +158,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         // Handle "not field eq value" which OData parses as "(not field) eq value"
         if (tokenIn is
             {
-                Left: UnaryOperatorToken { OperatorKind: UnaryOperatorKind.Not, Operand: EndPathToken { Identifier: string negatedPath } },
+                Left: UnaryOperatorToken { OperatorKind: UnaryOperatorKind.Not, Operand: { } negatedOperand },
                 Right: LiteralToken negatedLiteral
-            })
+            } && TryResolveComparisonPath(negatedOperand, out var negatedPath))
         {
             EnsureFilterable(negatedPath);
             var equalQuery = tokenIn.OperatorKind switch
@@ -91,6 +185,30 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         }
 
         throw new NotImplementedException();
+    }
+
+    private bool TryResolveComparisonPath(QueryToken token, out string path)
+    {
+        // A bare end-path is the simple case: "Field eq 'value'".
+        if (token is EndPathToken end)
+        {
+            path = end.Identifier;
+            return true;
+        }
+
+        // Inside a lambda, the range variable resolves back to the collection's field path.
+        if (token is RangeVariableToken rv && _lambdaContexts.Count > 0)
+        {
+            var ctx = _lambdaContexts.Peek();
+            if (string.Equals(rv.Name, ctx.Parameter, StringComparison.Ordinal))
+            {
+                path = ctx.Path;
+                return true;
+            }
+        }
+
+        path = string.Empty;
+        return false;
     }
 
     private void EnsureFilterable(string path)
@@ -201,11 +319,8 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
     public Query Visit(InToken tokenIn)
     {
-        if (tokenIn is
-            {
-                Left: EndPathToken { Identifier: string path },
-                Right: LiteralToken { Value: string valueString }
-            })
+        if (TryResolveComparisonPath(tokenIn.Left, out var path)
+            && tokenIn.Right is LiteralToken { Value: string valueString })
         {
             valueString = valueString.TrimStart('(').TrimEnd(')');
 
@@ -257,7 +372,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         };
     }
 
-    private static BooleanQuery VisitSearchIn(FunctionCallToken tokenIn)
+    private BooleanQuery VisitSearchIn(FunctionCallToken tokenIn)
     {
         var args = tokenIn.Arguments.ToList();
 
@@ -266,9 +381,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             throw new ArgumentException("search.in requires two or three arguments");
         }
 
-        if (args[0].ValueToken is not EndPathToken { Identifier: string path })
+        if (!TryResolveComparisonPath(args[0].ValueToken, out var path))
         {
-            throw new NotImplementedException("Passing anything other than an end path as the first parameter to search.in is not yet implemented");
+            throw new NotImplementedException("Passing anything other than an end path or lambda variable as the first parameter to search.in is not yet implemented");
         }
 
         if (args[1].ValueToken is not LiteralToken { Value: string inList })
