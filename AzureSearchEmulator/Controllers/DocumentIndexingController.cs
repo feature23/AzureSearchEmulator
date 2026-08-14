@@ -10,9 +10,18 @@ namespace AzureSearchEmulator.Controllers;
 public class DocumentIndexingController(
     JsonSerializerOptions jsonSerializerOptions,
     ISearchIndexRepository searchIndexRepository,
-    ISearchIndexer searchIndexer)
+    ISearchIndexer searchIndexer,
+    ILogger<DocumentIndexingController> logger)
     : ODataController
 {
+    /// <summary>
+    /// Cap on the batch body written to the log. Azure Search allows batches up to
+    /// 1000 documents / 16 MB; writing one whole to the log per request costs more than
+    /// it reveals, and the leading bytes are enough to see whether the payload carried
+    /// the fields the caller expected.
+    /// </summary>
+    private const int MaxLoggedBodyLength = 4096;
+
     [HttpPost]
     [Route("indexes({indexKey})/docs/search.index")]
     [Route("indexes/{indexKey}/docs/search.index")]
@@ -31,10 +40,14 @@ public class DocumentIndexingController(
         using var sr = new StreamReader(Request.Body);
         var json = await sr.ReadToEndAsync();
 
-        // Full batch body — logged BEFORE deserialization so even a malformed
-        // payload is visible. Devbox visibility beats log volume here: a merge
-        // whose body carried the wrong fields is otherwise undiagnosable.
-        Console.WriteLine($"[INDEX {indexKey}] body: {json}");
+        // Batch body, logged BEFORE deserialization so even a malformed payload is
+        // visible. At Debug so it is opt-in: the previous unconditional Console.WriteLine
+        // wrote the whole body — up to 16 MB — synchronously on the request thread under
+        // the process-wide console lock, which serialized concurrent indexing.
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug("[INDEX {IndexKey}] body: {Body}", indexKey, Truncate(json));
+        }
 
         var batch = JsonSerializer.Deserialize<IndexDocumentsBatch>(json, jsonSerializerOptions);
 
@@ -71,14 +84,29 @@ public class DocumentIndexingController(
 
         var result = searchIndexer.IndexDocuments(index, actions);
 
-        // Per-item outcomes, keyed — the Azure SDK's IndexDocuments does NOT
-        // throw on per-item failures by default, so a rejected merge is
-        // invisible to the caller unless it checks the batch response. This
-        // log line is the only place a dropped write is guaranteed to surface.
-        var summary = string.Join(", ", result.Value.Select(i =>
-            i.Status ? $"{i.Key}:{i.StatusCode}" : $"{i.Key}:{i.StatusCode} FAILED({i.ErrorMessage})"));
-        Console.WriteLine($"[INDEX {indexKey}] {result.Value.Count(i => i.Status)}/{actions.Count} ok — {summary}");
+        // Per-item outcomes — the Azure SDK's IndexDocuments does NOT throw on per-item
+        // failures by default, so a rejected merge is invisible to a caller that does not
+        // inspect the batch response. Failures log at Warning so they surface without
+        // needing Debug enabled; the all-succeeded case stays at Debug.
+        var failed = result.Value.Where(i => !i.Status).ToList();
+        var succeeded = result.Value.Count - failed.Count;
 
-        return StatusCode(result.Value.Any(i => !i.Status) ? 207 : 200, result);
+        if (failed.Count > 0)
+        {
+            logger.LogWarning("[INDEX {IndexKey}] {Succeeded}/{Total} ok — {Failures}",
+                indexKey, succeeded, actions.Count,
+                string.Join(", ", failed.Select(i => $"{i.Key}:{i.StatusCode} FAILED({i.ErrorMessage})")));
+        }
+        else if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogDebug("[INDEX {IndexKey}] {Succeeded}/{Total} ok", indexKey, succeeded, actions.Count);
+        }
+
+        return StatusCode(failed.Count > 0 ? 207 : 200, result);
     }
+
+    private static string Truncate(string value) =>
+        value.Length <= MaxLoggedBodyLength
+            ? value
+            : $"{value[..MaxLoggedBodyLength]}… [truncated, {value.Length} chars total]";
 }

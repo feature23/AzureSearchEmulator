@@ -113,7 +113,7 @@ public class ConcurrentIndexingTests(EmulatorFactory factory)
                             WriterId = writerId,
                             Payload = "load"
                         }
-                    }));
+                    }), cancellationToken: TestContext.Current.CancellationToken);
                 }
                 catch
                 {
@@ -214,6 +214,94 @@ public class ConcurrentIndexingTests(EmulatorFactory factory)
 
         var count = await recreatedClient.GetDocumentCountAsync(TestContext.Current.CancellationToken);
         Assert.Equal(1, count.Value);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task IndexDocuments_ItemMissingKeyField_FailsThatItemWithoutFailingTheBatch()
+    {
+        // A batch item with no key field made GetKeyTerm throw out of IndexDocuments,
+        // 500ing the whole request: every other item in the batch lost its result, and
+        // the per-item summary log — the record of which writes were dropped — never ran.
+        // The missing key must fail only its own item.
+        const string indexName = "test-missing-key-field";
+        var indexClient = factory.CreateSearchIndexClient();
+        await CreateConcurrencyIndexAsync(indexClient, indexName);
+
+        using var http = factory.CreateHttpClient();
+
+        // Item 2 omits "Id", the key field. Items 1 and 3 are well-formed.
+        const string body = """
+            {
+              "value": [
+                { "@search.action": "mergeOrUpload", "Id": "ok-before", "WriterId": 1, "Payload": "before" },
+                { "@search.action": "mergeOrUpload", "WriterId": 2, "Payload": "no key" },
+                { "@search.action": "mergeOrUpload", "Id": "ok-after", "WriterId": 3, "Payload": "after" }
+              ]
+            }
+            """;
+
+        var response = await http.PostAsync(
+            $"/indexes/{indexName}/docs/search.index",
+            new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            TestContext.Current.CancellationToken);
+
+        var responseBody = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.MultiStatus,
+            $"Expected 207 MultiStatus for a partially-failing batch, got {(int)response.StatusCode}. Body: {responseBody}");
+
+        // The two well-formed documents must still have been written.
+        var searchClient = factory.CreateSearchClient(indexName);
+        var before = await searchClient.GetDocumentAsync<ConcurrencyDoc>("ok-before", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("before", before.Value.Payload);
+
+        var after = await searchClient.GetDocumentAsync<ConcurrencyDoc>("ok-after", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("after", after.Value.Payload);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task IndexDocuments_DeleteItemMissingKeyField_FailsThatItemWithoutFailingTheBatch()
+    {
+        // Same hazard on the delete path, which had no try/catch at all.
+        const string indexName = "test-missing-key-delete";
+        var indexClient = factory.CreateSearchIndexClient();
+        await CreateConcurrencyIndexAsync(indexClient, indexName);
+
+        var searchClient = factory.CreateSearchClient(indexName);
+        await searchClient.IndexDocumentsAsync(
+            IndexDocumentsBatch.Upload(new[]
+            {
+                new ConcurrencyDoc { Id = "keep-me", WriterId = 0, Payload = "still here" }
+            }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        using var http = factory.CreateHttpClient();
+
+        const string body = """
+            {
+              "value": [
+                { "@search.action": "delete", "WriterId": 9 }
+              ]
+            }
+            """;
+
+        var response = await http.PostAsync(
+            $"/indexes/{indexName}/docs/search.index",
+            new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            TestContext.Current.CancellationToken);
+
+        var responseBody = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(response.StatusCode == System.Net.HttpStatusCode.MultiStatus,
+            $"Expected 207 MultiStatus, got {(int)response.StatusCode}. Body: {responseBody}");
+
+        // The unrelated document must be untouched.
+        var kept = await searchClient.GetDocumentAsync<ConcurrencyDoc>("keep-me", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("still here", kept.Value.Payload);
 
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }

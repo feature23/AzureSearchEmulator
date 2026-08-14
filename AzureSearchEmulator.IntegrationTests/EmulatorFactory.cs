@@ -93,6 +93,22 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
     }
 
     /// <summary>
+    /// Creates a raw <see cref="HttpClient"/> pointed at the emulator, for tests that need
+    /// to send payloads the strongly-typed SDK will not construct — such as a batch item
+    /// missing its key field.
+    /// </summary>
+    public HttpClient CreateHttpClient()
+    {
+        var handler = new HttpClientHandler
+        {
+            // Test environment only: the emulator serves a self-signed certificate.
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        };
+
+        return new HttpClient(handler) { BaseAddress = Endpoint };
+    }
+
+    /// <summary>
     /// Stops and disposes the emulator container.
     /// </summary>
     public async ValueTask DisposeAsync()
