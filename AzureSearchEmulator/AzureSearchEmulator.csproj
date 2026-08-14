@@ -17,7 +17,7 @@
 		<PackageReference Include="Lucene.Net.Highlighter" Version="4.8.0-beta00017" />
 		<PackageReference Include="Lucene.Net.Queries" Version="4.8.0-beta00017" />
 		<PackageReference Include="Lucene.Net.QueryParser" Version="4.8.0-beta00017" />
-		<PackageReference Include="Microsoft.AspNetCore.OData" Version="9.4.1" />
+		<PackageReference Include="Microsoft.AspNetCore.OData" Version="9.5.0" />
 	</ItemGroup>
 
 	<ItemGroup>

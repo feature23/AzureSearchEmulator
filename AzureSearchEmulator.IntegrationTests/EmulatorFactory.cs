@@ -12,7 +12,7 @@ namespace AzureSearchEmulator.IntegrationTests;
 /// Factory for creating and managing an Azure Search Emulator container using Testcontainers.
 /// The container runs the emulator built from the Dockerfile in the repository root.
 /// </summary>
-public class EmulatorFactory : IAsyncLifetime
+public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
 {
     private readonly int _httpsPort = Random.Shared.Next(5000, 60000);
 
@@ -27,15 +27,14 @@ public class EmulatorFactory : IAsyncLifetime
     /// Starts the emulator container.
     /// Must be called before using the SearchIndexClient or SearchClient.
     /// </summary>
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         var image = new ImageFromDockerfileBuilder()
             .WithDockerfileDirectory(CommonDirectoryPath.GetProjectDirectory(), "..")
             .WithCleanUp(true)
             .Build();
 
-        _container = new ContainerBuilder()
-            .WithImage(image)
+        _container = new ContainerBuilder(image)
             .WithPortBinding(_httpsPort, _httpsPort)
             .WithEnvironment("ASPNETCORE_URLS", $"https://+:{_httpsPort}")
             .WithEnvironment("ASPNETCORE_HTTPS_PORT", _httpsPort.ToString())
@@ -96,12 +95,14 @@ public class EmulatorFactory : IAsyncLifetime
     /// <summary>
     /// Stops and disposes the emulator container.
     /// </summary>
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_container != null)
         {
             await _container.StopAsync();
             await _container.DisposeAsync();
         }
+
+        GC.SuppressFinalize(this);
     }
 }
