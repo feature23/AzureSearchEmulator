@@ -21,8 +21,12 @@ namespace AzureSearchEmulator.IntegrationTests;
 public class ConcurrentIndexingTests(EmulatorFactory factory)
     : IClassFixture<EmulatorFactory>
 {
-    private const int Writers = 20;
-    private const int BatchesPerWriter = 15;
+    // Matches the load in PR #35's reproduction: 30 concurrent writers x 30 sequential
+    // requests against a fresh index, which produced 889/900 failures before the fix and
+    // left the index permanently corrupt. Keeping the same shape means a regression here
+    // is directly comparable to that report.
+    private const int Writers = 30;
+    private const int BatchesPerWriter = 30;
 
     [Fact]
     public async Task ConcurrentBatches_SameIndex_AllSucceedAndAllDocumentsPersist()
@@ -54,8 +58,11 @@ public class ConcurrentIndexingTests(EmulatorFactory factory)
 
                 try
                 {
+                    // MergeOrUpload, matching PR #35's repro. Unlike Upload this reads through
+                    // the NRT reader in MergeDocument before writing, so it exercises the
+                    // reader/writer interaction that Upload alone would skip.
                     var response = await searchClient.IndexDocumentsAsync(
-                        IndexDocumentsBatch.Upload(docs), cancellationToken: TestContext.Current.CancellationToken);
+                        IndexDocumentsBatch.MergeOrUpload(docs), cancellationToken: TestContext.Current.CancellationToken);
 
                     // Per-item failures do NOT throw by default — the SDK surfaces
                     // them on the result, so an unchecked call would silently pass.
@@ -105,7 +112,7 @@ public class ConcurrentIndexingTests(EmulatorFactory factory)
             {
                 try
                 {
-                    await searchClient.IndexDocumentsAsync(IndexDocumentsBatch.Upload(new[]
+                    await searchClient.IndexDocumentsAsync(IndexDocumentsBatch.MergeOrUpload(new[]
                     {
                         new ConcurrencyDoc
                         {
