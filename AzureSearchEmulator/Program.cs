@@ -73,14 +73,25 @@ app.UseODataBatching();
 
 app.UseRouting();
 
-app.Use((context, next) =>
+app.Use(async (context, next) =>
 {
     var method = context.Request.Method;
     var path = context.Request.Path;
     var queryString = context.Request.QueryString.ToString();
     var fullPath = string.IsNullOrEmpty(queryString) ? path.ToString() : $"{path}{queryString}";
-    Console.WriteLine($"[HTTP {method}] {fullPath}");
-    return next();
+    try
+    {
+        await next();
+        // Status code logged AFTER the pipeline so a rejected request is
+        // visible in the log — a silent 4xx/5xx here cost a full afternoon
+        // of diagnosis when an index merge was dropped without a trace.
+        Console.WriteLine($"[HTTP {method} {context.Response.StatusCode}] {fullPath}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[HTTP {method} EXCEPTION] {fullPath} — {ex.GetType().Name}: {ex.Message}");
+        throw;
+    }
 });
 
 app.MapControllers();

@@ -30,6 +30,12 @@ public class DocumentIndexingController(
 
         using var sr = new StreamReader(Request.Body);
         var json = await sr.ReadToEndAsync();
+
+        // Full batch body — logged BEFORE deserialization so even a malformed
+        // payload is visible. Devbox visibility beats log volume here: a merge
+        // whose body carried the wrong fields is otherwise undiagnosable.
+        Console.WriteLine($"[INDEX {indexKey}] body: {json}");
+
         var batch = JsonSerializer.Deserialize<IndexDocumentsBatch>(json, jsonSerializerOptions);
 
         if (batch == null)
@@ -64,6 +70,14 @@ public class DocumentIndexingController(
         }
 
         var result = searchIndexer.IndexDocuments(index, actions);
+
+        // Per-item outcomes, keyed — the Azure SDK's IndexDocuments does NOT
+        // throw on per-item failures by default, so a rejected merge is
+        // invisible to the caller unless it checks the batch response. This
+        // log line is the only place a dropped write is guaranteed to surface.
+        var summary = string.Join(", ", result.Value.Select(i =>
+            i.Status ? $"{i.Key}:{i.StatusCode}" : $"{i.Key}:{i.StatusCode} FAILED({i.ErrorMessage})"));
+        Console.WriteLine($"[INDEX {indexKey}] {result.Value.Count(i => i.Status)}/{actions.Count} ok — {summary}");
 
         return StatusCode(result.Value.Any(i => !i.Status) ? 207 : 200, result);
     }
