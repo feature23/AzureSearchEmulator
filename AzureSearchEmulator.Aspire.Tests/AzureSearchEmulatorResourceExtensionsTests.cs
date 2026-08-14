@@ -1,6 +1,7 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using F23.Aspire.Hosting.AzureSearchEmulator;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AzureSearchEmulator.Aspire.Tests;
 
@@ -31,8 +32,17 @@ public class AzureSearchEmulatorResourceExtensionsTests
         Assert.Equal(AzureSearchEmulatorResource.DefaultHttpsPort, https.TargetPort);
         Assert.Equal("https", https.Scheme);
 
-        var envVars = await resource.Resource.GetEnvironmentVariableValuesAsync();
-        Assert.True(envVars.ContainsKey("ASPNETCORE_URLS"));
+        // Publish, not Run: under Run the builder resolves endpoint-backed values through
+        // IValueProvider, which blocks forever without a live app host. Publish captures the
+        // configured variables without resolving them, which is what this assertion needs.
+        var executionConfiguration = await ExecutionConfigurationBuilder
+            .Create(resource.Resource)
+            .WithEnvironmentVariablesConfig()
+            .BuildAsync(new DistributedApplicationExecutionContext(DistributedApplicationOperation.Publish),
+                NullLogger.Instance,
+                TestContext.Current.CancellationToken);
+
+        Assert.Contains(executionConfiguration.EnvironmentVariables, kvp => kvp.Key == "ASPNETCORE_URLS");
     }
 
     [InlineData(false)]

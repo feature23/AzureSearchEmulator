@@ -7,15 +7,18 @@
 		<IsTestProject>true</IsTestProject>
 		<WarningsAsErrors>nullable</WarningsAsErrors>
 		<IsPackable>false</IsPackable>
+		<!-- xUnit v3 test projects are self-executing console apps rather than
+		     libraries loaded by a separate runner. -->
+		<OutputType>Exe</OutputType>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="xunit" Version="2.9.3" />
+		<PackageReference Include="xunit.v3" Version="3.2.2" />
 		<PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 			<PrivateAssets>all</PrivateAssets>
 		</PackageReference>
-		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
 	</ItemGroup>
 
 	<ItemGroup>

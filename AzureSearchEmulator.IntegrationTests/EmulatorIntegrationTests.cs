@@ -29,12 +29,12 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         Assert.Equal(indexName, result.Name);
 
         // Verify the index exists
-        var retrievedIndex = await indexClient.GetIndexAsync(indexName);
+        var retrievedIndex = await indexClient.GetIndexAsync(indexName, TestContext.Current.CancellationToken);
         Assert.NotNull(retrievedIndex);
         Assert.Equal(indexName, retrievedIndex.Value.Name);
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -51,18 +51,18 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         // Act
         var searchClient = factory.CreateSearchClient(indexName);
         var batch = IndexDocumentsBatch.Upload(documents);
-        var result = await searchClient.IndexDocumentsAsync(batch);
+        var result = await searchClient.IndexDocumentsAsync(batch, cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(result);
         Assert.True(result.Value.Results.All(r => r.Succeeded), "All documents should be successfully indexed");
 
         // Verify document count
-        var countResult = await searchClient.GetDocumentCountAsync();
+        var countResult = await searchClient.GetDocumentCountAsync(TestContext.Current.CancellationToken);
         Assert.Equal(5, countResult.Value);
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -77,7 +77,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await UploadDocumentsAsync(searchClient);
 
         // Act
-        var document = await searchClient.GetDocumentAsync<Product>("1");
+        var document = await searchClient.GetDocumentAsync<Product>("1", cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(document);
@@ -86,7 +86,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         Assert.Equal("High-performance laptop with 16GB RAM and 512GB SSD", document.Value.Description);
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -106,17 +106,17 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             SearchFields = { "name", "description" },
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("laptop", options);
+        var results = await searchClient.SearchAsync<Product>("laptop", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.Contains(items, r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase));
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -136,17 +136,17 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "InStock eq true",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.All(r => r.Document.InStock), "All results should have inStock = true");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -167,15 +167,15 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "Category eq 'Electronics'",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         Assert.NotNull(results);
-        var items = await results.Value.GetResultsAsync().ToListAsync();
+        var items = await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.All(r => r.Document.Category == "Electronics"),
             "All results should have Category = Electronics");
 
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -191,13 +191,13 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await UploadDocumentsAsync(searchClient);
 
         var options = new SearchOptions { SearchFields = { "Category" }, Size = 50 };
-        var results = await searchClient.SearchAsync<Product>("electronics", options);
-        var items = await results.Value.GetResultsAsync().ToListAsync();
+        var results = await searchClient.SearchAsync<Product>("electronics", options, TestContext.Current.CancellationToken);
+        var items = await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
 
         Assert.NotEmpty(items);
         Assert.True(items.All(r => r.Document.Category == "Electronics"));
 
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -220,17 +220,17 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
                 new SearchField(nameof(Product.InStock), SearchFieldDataType.Boolean) { IsFilterable = true, IsStored = true }
             ]
         };
-        await indexClient.CreateIndexAsync(index);
+        await indexClient.CreateIndexAsync(index, TestContext.Current.CancellationToken);
         await UploadDocumentsAsync(searchClient);
 
         var options = new SearchOptions { Filter = "Name eq 'Laptop Pro 15'", Size = 50 };
         await Assert.ThrowsAnyAsync<Exception>(async () =>
         {
-            var results = await searchClient.SearchAsync<Product>("*", options);
-            await results.Value.GetResultsAsync().ToListAsync();
+            var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
+            await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
         });
 
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -250,12 +250,12 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             OrderBy = { "price desc" },
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
 
         // Verify descending order
@@ -270,7 +270,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         }
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -290,8 +290,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Size = 2,
             Skip = 0
         };
-        var firstPageResults = await searchClient.SearchAsync<Product>("*:*", firstPageOptions);
-        var firstPageItems = await firstPageResults.Value.GetResultsAsync().ToListAsync();
+        var firstPageResults = await searchClient.SearchAsync<Product>("*:*", firstPageOptions, TestContext.Current.CancellationToken);
+        var firstPageItems = await firstPageResults.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
 
         // Assert first page
         Assert.NotNull(firstPageItems);
@@ -304,8 +304,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Size = 2,
             Skip = 2
         };
-        var secondPageResults = await searchClient.SearchAsync<Product>("*", secondPageOptions);
-        var secondPageItems = await secondPageResults.Value.GetResultsAsync().ToListAsync();
+        var secondPageResults = await searchClient.SearchAsync<Product>("*", secondPageOptions, TestContext.Current.CancellationToken);
+        var secondPageItems = await secondPageResults.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
 
         // Assert second page
         Assert.NotNull(secondPageItems);
@@ -316,7 +316,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         Assert.NotEqual(firstPageId, secondPageId);
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         // Ensure a clean slate
         try
         {
-            await indexClient.DeleteIndexAsync(indexName);
+            await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
@@ -346,19 +346,19 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         };
 
         // Act - PUT to a non-existent index should create it
-        var result = await indexClient.CreateOrUpdateIndexAsync(index);
+        var result = await indexClient.CreateOrUpdateIndexAsync(index, cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(result);
         Assert.Equal(indexName, result.Value.Name);
 
-        var retrieved = await indexClient.GetIndexAsync(indexName);
+        var retrieved = await indexClient.GetIndexAsync(indexName, TestContext.Current.CancellationToken);
         Assert.NotNull(retrieved);
         Assert.Equal(indexName, retrieved.Value.Name);
         Assert.Equal(2, retrieved.Value.Fields.Count);
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -371,24 +371,24 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await CreateIndexAsync(indexClient, indexName);
 
         // Pull the current index and add a backward-compatible field
-        var existing = (await indexClient.GetIndexAsync(indexName)).Value;
+        var existing = (await indexClient.GetIndexAsync(indexName, TestContext.Current.CancellationToken)).Value;
         var originalFieldCount = existing.Fields.Count;
 
         existing.Fields.Add(new SearchField("Tags", SearchFieldDataType.String) { IsFilterable = true, IsStored = true });
 
         // Act - PUT on an existing index should update its schema
-        var result = await indexClient.CreateOrUpdateIndexAsync(existing);
+        var result = await indexClient.CreateOrUpdateIndexAsync(existing, cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(result);
         Assert.Equal(indexName, result.Value.Name);
 
-        var retrieved = await indexClient.GetIndexAsync(indexName);
+        var retrieved = await indexClient.GetIndexAsync(indexName, TestContext.Current.CancellationToken);
         Assert.Equal(originalFieldCount + 1, retrieved.Value.Fields.Count);
         Assert.Contains(retrieved.Value.Fields, f => f.Name == "Tags");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -401,11 +401,11 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await CreateIndexAsync(indexClient, indexName);
 
         // Act
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
 
         // Assert - Verify index is deleted
         var exception = await Assert.ThrowsAsync<Azure.RequestFailedException>(
-            async () => await indexClient.GetIndexAsync(indexName)
+            async () => await indexClient.GetIndexAsync(indexName, TestContext.Current.CancellationToken)
         );
         Assert.Equal(404, exception.Status);
     }
@@ -427,18 +427,18 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "search.ismatch('laptop')",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.Any(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
             "Should return documents with 'laptop' in Name or Description");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -458,18 +458,18 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "search.ismatch('laptop', 'Name')",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.All(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
             "All results should have 'laptop' in Name field");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -489,17 +489,17 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "search.ismatch('16000 DPI', 'Name,Description')",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.Contains(items, r => r.Document.Name == "Gaming Mouse" || r.Document.Description.Contains("16000 DPI"));
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -519,12 +519,12 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "search.ismatch('laptop') and InStock eq true",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.All(r => r.Document.InStock), "All results should have InStock = true");
         Assert.True(items.All(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase) ||
@@ -532,7 +532,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             "All results should contain 'laptop'");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -552,19 +552,19 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "not search.ismatch('keyboard')",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.All(r => !r.Document.Name.Contains("Keyboard", StringComparison.OrdinalIgnoreCase) &&
                                    !r.Document.Description.Contains("Keyboard", StringComparison.OrdinalIgnoreCase)),
             "All results should NOT contain 'keyboard'");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -584,18 +584,18 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             Filter = "search.ismatchscoring('laptop')",
             Size = 50
         };
-        var results = await searchClient.SearchAsync<Product>("*", options);
+        var results = await searchClient.SearchAsync<Product>("*", options, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(results);
         var resultsList = results.Value.GetResultsAsync();
-        var items = await resultsList.ToListAsync();
+        var items = await resultsList.ToListAsync(TestContext.Current.CancellationToken);
         Assert.NotEmpty(items);
         Assert.True(items.Any(r => r.Document.Name.Contains("Laptop", StringComparison.OrdinalIgnoreCase)),
             "Should return documents with 'laptop'");
 
         // Cleanup
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     // Collection field tests (issue #6)
@@ -610,14 +610,14 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await CreateTaggedProductIndexAsync(indexClient, indexName);
         await UploadTaggedProductsAsync(searchClient);
 
-        var doc = await searchClient.GetDocumentAsync<TaggedProduct>("1");
+        var doc = await searchClient.GetDocumentAsync<TaggedProduct>("1", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(doc.Value);
         Assert.Equal("1", doc.Value.Id);
         Assert.Equal(new[] { "red", "cotton", "shirt" }, doc.Value.Tags);
         Assert.Equal(new[] { 8, 10, 12 }, doc.Value.Sizes);
 
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
     [Fact]
@@ -631,8 +631,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await UploadTaggedProductsAsync(searchClient);
 
         var options = new SearchOptions { Filter = "Tags/any(t: t eq 'cotton')", Size = 50 };
-        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
-        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options, TestContext.Current.CancellationToken);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken))
             .Select(r => r.Document.Id)
             .OrderBy(id => id)
             .ToList();
@@ -652,8 +652,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await UploadTaggedProductsAsync(searchClient);
 
         var options = new SearchOptions { Filter = "Tags/any(t: search.in(t, 'wool,denim'))", Size = 50 };
-        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
-        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options, TestContext.Current.CancellationToken);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken))
             .Select(r => r.Document.Id)
             .OrderBy(id => id)
             .ToList();
@@ -674,8 +674,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         // all(t: t ne 'cotton') — only docs whose tags do NOT contain 'cotton' should match.
         // Doc 1 and doc 4 contain 'cotton', so only doc 2 (jeans) and doc 3 (hat) should match.
         var options = new SearchOptions { Filter = "Tags/all(t: t ne 'cotton')", Size = 50 };
-        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
-        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options, TestContext.Current.CancellationToken);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken))
             .Select(r => r.Document.Id)
             .OrderBy(id => id)
             .ToList();
@@ -695,8 +695,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
 
         // Doc 1 has Sizes [8,10,12] — 12 is >= 12. Doc 2 has Sizes [30,32,34] — all >= 12.
         var options = new SearchOptions { Filter = "Sizes/any(s: s ge 12)", Size = 50 };
-        var results = await searchClient.SearchAsync<TaggedProduct>("*", options);
-        var ids = (await results.Value.GetResultsAsync().ToListAsync())
+        var results = await searchClient.SearchAsync<TaggedProduct>("*", options, TestContext.Current.CancellationToken);
+        var ids = (await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken))
             .Select(r => r.Document.Id)
             .OrderBy(id => id)
             .ToList();
@@ -717,8 +717,8 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         // Tags is searchable; a free-text search for 'denim' should match doc 2 even though
         // 'denim' is just one entry in its tags array.
         var options = new SearchOptions { SearchFields = { "Tags" }, Size = 50 };
-        var results = await searchClient.SearchAsync<TaggedProduct>("denim", options);
-        var items = await results.Value.GetResultsAsync().ToListAsync();
+        var results = await searchClient.SearchAsync<TaggedProduct>("denim", options, TestContext.Current.CancellationToken);
+        var items = await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
 
         Assert.Single(items);
         Assert.Equal("2", items[0].Document.Id);
@@ -730,7 +730,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
     {
         try
         {
-            await indexClient.DeleteIndexAsync(indexName);
+            await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
@@ -748,7 +748,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             ]
         };
 
-        await indexClient.CreateIndexAsync(index);
+        await indexClient.CreateIndexAsync(index, TestContext.Current.CancellationToken);
         return index;
     }
 
@@ -762,7 +762,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             new() { Id = "4", Name = "Green Socks", Tags = ["green", "cotton"], Sizes = [9, 10, 11] },
         };
         var batch = IndexDocumentsBatch.Upload(documents);
-        await searchClient.IndexDocumentsAsync(batch);
+        await searchClient.IndexDocumentsAsync(batch, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static async Task<SearchIndex> CreateIndexAsync(SearchIndexClient indexClient, string indexName)
@@ -770,7 +770,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         // Clean up any existing index
         try
         {
-            await indexClient.DeleteIndexAsync(indexName);
+            await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
@@ -790,7 +790,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
             ]
         };
 
-        await indexClient.CreateIndexAsync(index);
+        await indexClient.CreateIndexAsync(index, TestContext.Current.CancellationToken);
 
         return index;
     }
@@ -799,7 +799,7 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
     {
         var documents = CreateProductDocuments();
         var batch = IndexDocumentsBatch.Upload(documents);
-        await searchClient.IndexDocumentsAsync(batch);
+        await searchClient.IndexDocumentsAsync(batch, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static List<Product> CreateProductDocuments()
