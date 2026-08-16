@@ -120,9 +120,10 @@ public static class GeoSupport
                 "A polygon must have at least four points, where the first and last are the same.");
         }
 
-        // Coordinates come straight from the literal without arithmetic applied, so the
-        // first and last points of a closed ring are bit-identical rather than merely close.
-        if (ring[0].Lon != ring[^1].Lon || ring[0].Lat != ring[^1].Lat)
+        // Closure is compared with a tolerance rather than exactly: 1e-6 degrees is on the
+        // order of 10cm, far below any meaningful polygon vertex, so a ring that round-trips
+        // through a client's formatting still counts as closed.
+        if (Math.Abs(ring[0].Lon - ring[^1].Lon) > 1.0e-6 || Math.Abs(ring[0].Lat - ring[^1].Lat) > 1.0e-6)
         {
             throw new InvalidOperationException(
                 "A polygon must be closed; its first and last points must be the same.");

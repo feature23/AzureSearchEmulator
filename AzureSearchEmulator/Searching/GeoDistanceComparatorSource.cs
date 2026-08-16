@@ -21,26 +21,16 @@ public class GeoDistanceComparatorSource(string fieldName, double originLon, dou
 
     // FieldComparer<T> requires a reference type, so the distances are boxed through J2N's
     // Double the same way Lucene's own DoubleComparer does.
-    private sealed class Comparer : FieldComparer<J2N.Numerics.Double>
+    private sealed class Comparer(string fieldName, double originLon, double originLat, int numHits)
+        : FieldComparer<J2N.Numerics.Double>
     {
-        private readonly string _fieldName;
-        private readonly double _originLon;
-        private readonly double _originLat;
-        private readonly double[] _values;
+        private readonly double[] _values = new double[numHits];
         private double _bottom;
         private double _topValue;
 
         private FieldCache.Doubles? _lats;
         private FieldCache.Doubles? _lons;
         private IBits? _hasValue;
-
-        public Comparer(string fieldName, double originLon, double originLat, int numHits)
-        {
-            _fieldName = fieldName;
-            _originLon = originLon;
-            _originLat = originLat;
-            _values = new double[numHits];
-        }
 
         public override int Compare(int slot1, int slot2) => _values[slot1].CompareTo(_values[slot2]);
 
@@ -57,10 +47,10 @@ public class GeoDistanceComparatorSource(string fieldName, double originLon, dou
         public override FieldComparer SetNextReader(AtomicReaderContext context)
         {
             var reader = context.AtomicReader;
-            var latField = GeoSupport.GetLatFieldName(_fieldName);
+            var latField = GeoSupport.GetLatFieldName(fieldName);
 
             _lats = FieldCache.DEFAULT.GetDoubles(reader, latField, true);
-            _lons = FieldCache.DEFAULT.GetDoubles(reader, GeoSupport.GetLonFieldName(_fieldName), true);
+            _lons = FieldCache.DEFAULT.GetDoubles(reader, GeoSupport.GetLonFieldName(fieldName), true);
             _hasValue = FieldCache.DEFAULT.GetDocsWithField(reader, latField);
 
             return this;
@@ -75,7 +65,7 @@ public class GeoDistanceComparatorSource(string fieldName, double originLon, dou
                 return double.MaxValue;
             }
 
-            return GeoSupport.GetDistanceKm(_lons!.Get(doc), _lats!.Get(doc), _originLon, _originLat);
+            return GeoSupport.GetDistanceKm(_lons!.Get(doc), _lats!.Get(doc), originLon, originLat);
         }
     }
 }
