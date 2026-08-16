@@ -87,13 +87,14 @@ public class GeoIntersectsFilter(string fieldName, IReadOnlyList<(double Lon, do
     {
         var reader = context.AtomicReader;
 
-        var lats = FieldCache.DEFAULT.GetDoubles(reader, GeoSupport.GetLatFieldName(fieldName), true);
-        var lons = FieldCache.DEFAULT.GetDoubles(reader, GeoSupport.GetLonFieldName(fieldName), true);
-        var hasValue = FieldCache.DEFAULT.GetDocsWithField(reader, GeoSupport.GetLatFieldName(fieldName));
+        var getPoints = GeoSupport.GetPointReader(reader, fieldName);
 
+        // Azure Search evaluates geo.intersects over a null field as false, which falls out
+        // of the existential test below: a document with no points has nothing inside the
+        // polygon. For a collection, matching any single point mirrors the any() lambda that
+        // Azure requires around this filter.
         return new GeoDocIdSet(reader.MaxDoc, acceptDocs, doc =>
-            // Azure Search evaluates geo.intersects over a null field as false.
-            hasValue.Get(doc) && GeoSupport.IsPointInPolygon(ring, lons.Get(doc), lats.Get(doc)));
+            getPoints(doc).Any(point => GeoSupport.IsPointInPolygon(ring, point.Lon, point.Lat)));
     }
 
     public override string ToString() => $"GeoIntersectsFilter({fieldName}, {ring.Count} points)";

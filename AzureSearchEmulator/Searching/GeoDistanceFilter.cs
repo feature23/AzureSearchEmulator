@@ -25,34 +25,47 @@ public class GeoDistanceFilter(
     {
         var reader = context.AtomicReader;
 
-        // SortedNumericDocValues would be the natural fit for multi-valued points, but the
-        // documents are indexed with DoubleField, so the values are read back from the
-        // per-segment numeric doc values that Lucene builds for them.
-        var lats = FieldCache.DEFAULT.GetDoubles(reader, GeoSupport.GetLatFieldName(fieldName), true);
-        var lons = FieldCache.DEFAULT.GetDoubles(reader, GeoSupport.GetLonFieldName(fieldName), true);
-        var hasValue = FieldCache.DEFAULT.GetDocsWithField(reader, GeoSupport.GetLatFieldName(fieldName));
+        var getPoints = GeoSupport.GetPointReader(reader, fieldName);
 
         return new GeoDocIdSet(reader.MaxDoc, acceptDocs, doc =>
         {
+            var points = getPoints(doc);
+
             // A null point never matches, in either direction. Azure Search treats
-            // geo.distance over a null field as null, which fails every comparison.
-            if (!hasValue.Get(doc))
+            // geo.distance over a null field as null, which fails every comparison. An empty
+            // collection behaves the same way, since there is no element to satisfy the
+            // predicate.
+            if (points.Count == 0)
             {
                 return false;
             }
 
-            var distance = GeoSupport.GetDistanceKm(lons.Get(doc), lats.Get(doc), originLon, originLat);
-
-            // Each operator is tested directly rather than by negating its opposite: the
-            // inverse of "< d" is ">= d", so flipping the result of an exclusive test would
-            // silently make the boundary inclusive.
-            return (withinDistance, inclusive) switch
+            // A match on any single point is enough: Azure only allows this filter inside an
+            // any() lambda for collections, whose semantics are exactly "some element
+            // satisfies the predicate". The all() case is compiled as ¬any(¬P) higher up, so
+            // it also arrives here as an existential test.
+            foreach (var (lon, lat) in points)
             {
-                (true, true) => distance <= distanceKm,   // le
-                (true, false) => distance < distanceKm,   // lt
-                (false, true) => distance >= distanceKm,  // ge
-                (false, false) => distance > distanceKm   // gt
-            };
+                var distance = GeoSupport.GetDistanceKm(lon, lat, originLon, originLat);
+
+                // Each operator is tested directly rather than by negating its opposite: the
+                // inverse of "< d" is ">= d", so flipping the result of an exclusive test would
+                // silently make the boundary inclusive.
+                var matches = (withinDistance, inclusive) switch
+                {
+                    (true, true) => distance <= distanceKm,   // le
+                    (true, false) => distance < distanceKm,   // lt
+                    (false, true) => distance >= distanceKm,  // ge
+                    (false, false) => distance > distanceKm   // gt
+                };
+
+                if (matches)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         });
     }
 

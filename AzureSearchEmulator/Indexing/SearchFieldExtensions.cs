@@ -71,13 +71,10 @@ public static class SearchFieldExtensions
             }
             else if (elementType == GeoSupport.GeographyPointType)
             {
-                // Storing each point under the same field names would index fine, but the
-                // geo filters read values back through the field cache, which exposes only
-                // one value per document. Rather than silently matching against an
-                // arbitrary point, this is rejected until multi-valued points are read
-                // through doc values.
-                throw new NotImplementedException(
-                    $"Field '{field.Name}': {field.Type} is not yet supported.");
+                // Every point goes under the same field names; the geo filters read them
+                // back through doc values, which preserves all of a document's points.
+                var (lon, lat) = GeoSupport.ParseGeoJsonPoint(field.Name, element);
+                fields.AddRange(GeoSupport.CreateFields(field.Name, lon, lat, field.Retrievable));
             }
             else
             {

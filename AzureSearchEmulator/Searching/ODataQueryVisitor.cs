@@ -605,11 +605,12 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
         if (field is null) return;
 
-        if (field.Type != GeoSupport.GeographyPointType)
+        // Collection(Edm.GeographyPoint) is allowed as well: Azure evaluates the geo functions
+        // against a range variable iterating the collection, and the filters match a document
+        // when any of its points satisfies the predicate.
+        if (field.Type != GeoSupport.GeographyPointType
+            && field.Type != $"Collection({GeoSupport.GeographyPointType})")
         {
-            // Collection(Edm.GeographyPoint) lands here too: the geo filters read a single
-            // point per document from the field cache, so a collection cannot be evaluated
-            // correctly and is reported rather than quietly matching nothing.
             throw new InvalidOperationException(
                 $"Field '{field.Name}' is of type {field.Type}; {functionName} requires a {GeoSupport.GeographyPointType} field.");
         }
