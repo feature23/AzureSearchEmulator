@@ -68,7 +68,12 @@ As in Azure Search, document values use the GeoJSON `Point` format
 expressions use WKT literals (`geography'POINT(longitude latitude)'`), and `geo.distance`
 returns kilometers. Note that both forms list *longitude before latitude*.
 
-`Collection(Edm.GeographyPoint)` is not yet supported and is rejected at indexing time.
+`Collection(Edm.GeographyPoint)` is supported for indexing, filtering, and retrieval. As in
+Azure Search, a document matches when *any* of its points satisfies the filter, which is
+normally written with a lambda, i.e.
+`Locations/any(loc: geo.distance(loc, geography'POINT(-122.131577 47.678581)') le 10)`.
+Collections cannot be sorted, so `$orderby` still requires a single `Edm.GeographyPoint`
+field.
 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.

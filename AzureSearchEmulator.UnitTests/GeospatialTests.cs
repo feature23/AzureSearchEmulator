@@ -473,6 +473,38 @@ public class GeospatialTests : IDisposable
         Assert.Null(Assert.Single(response.Results)["Location"]);
     }
 
+    [Fact]
+    public async Task Search_ReturnsCollectionOfGeographyPointsAsGeoJson()
+    {
+        var index = LuceneTestHelper.CreateStoreIndex();
+        index.Fields.First(f => f.Name == "Locations").Retrievable = true;
+
+        // Indexed from the original JSON, exactly as an upload would be, so this covers the
+        // stored sidecar the collection round-trip relies on.
+        var doc = JsonNode.Parse(
+            """
+            {
+              "Id": "1",
+              "Locations": [
+                {"type":"Point","coordinates":[-122.3321,47.6062]},
+                {"type":"Point","coordinates":[-122.2015,47.6101]}
+              ]
+            }
+            """)!.AsObject();
+
+        var (helper, searcher) = BuildSearcher(index, [doc]);
+        using var _ = helper;
+
+        var response = await searcher.Search(helper.Index, new SearchRequest { Search = "*", Top = 50 });
+
+        var result = Assert.Single(response.Results)["Locations"]!.AsArray();
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("Point", result[0]!["type"]?.GetValue<string>());
+        Assert.Equal(-122.3321, result[0]!["coordinates"]![0]!.GetValue<double>(), 6);
+        Assert.Equal(47.6101, result[1]!["coordinates"]![1]!.GetValue<double>(), 6);
+    }
+
     private class StubReaderFactory(Lucene.Net.Store.Directory directory) : ILuceneIndexReaderFactory
     {
         public IndexReader GetIndexReader(string indexName) => DirectoryReader.Open(directory);
@@ -608,35 +640,160 @@ public class GeospatialTests : IDisposable
     // ===== Collection(Edm.GeographyPoint) =====
 
     [Fact]
-    public void CreateFields_ForCollectionOfPoints_ThrowsRatherThanIndexingSilently()
+    public void CreateFields_ForCollectionOfPoints_IndexesEveryPoint()
     {
-        // Multi-valued points are not supported yet. Indexing them would appear to work but
-        // filters would then match against only one of the points, so this fails loudly.
-        var field = new SearchField { Name = "Locations", Type = "Collection(Edm.GeographyPoint)" };
+        var field = new SearchField { Name = "Locations", Type = "Collection(Edm.GeographyPoint)", Retrievable = true };
         var value = JsonNode.Parse("""[{"type":"Point","coordinates":[0,0]},{"type":"Point","coordinates":[1,1]}]""")!;
 
-        var ex = Assert.Throws<NotImplementedException>(() => field.CreateFields(value).ToList());
+        var fields = field.CreateFields(value).ToList();
+
+        // Each point contributes its own doc values entry, which is what lets the filters see
+        // every point rather than only the first.
+        Assert.Equal(2, fields.Count(f => f.Name == GeoSupport.GetPointDocValuesFieldName("Locations")));
+    }
+
+    [Fact]
+    public void CreateFields_ForCollectionOfPoints_RejectsNonPointElements()
+    {
+        var field = new SearchField { Name = "Locations", Type = "Collection(Edm.GeographyPoint)" };
+        var value = JsonNode.Parse("""[{"type":"LineString","coordinates":[[0,0],[1,1]]}]""")!;
+
+        var ex = Assert.Throws<InvalidOperationException>(() => field.CreateFields(value).ToList());
+
+        Assert.Contains("LineString", ex.Message);
+    }
+
+    [Fact]
+    public void EncodePointBytes_RoundTripsExactly()
+    {
+        var (lon, lat) = GeoSupport.DecodePointBytes(GeoSupport.EncodePointBytes(-122.3321, 47.6062));
+
+        Assert.Equal(-122.3321, lon);
+        Assert.Equal(47.6062, lat);
+    }
+
+    [Fact]
+    public void GeoDistance_OnCollectionField_MatchesWhenAnyPointIsInRange()
+    {
+        using var helper = new LuceneTestHelper(
+            LuceneTestHelper.CreateStoreIndex(),
+            LuceneTestHelper.CreateStoreDocuments());
+
+        // Within 20km of Seattle: only the Puget chain qualifies, and it does so through a
+        // point that is not the document's only one.
+        var names = Search(helper, $"geo.distance(Locations, {Seattle}) le 20");
+
+        Assert.Equal(["Puget Chain"], names);
+    }
+
+    [Fact]
+    public void GeoDistance_OnCollectionField_ConsidersPointsBeyondTheFirst()
+    {
+        using var helper = new LuceneTestHelper(
+            LuceneTestHelper.CreateStoreIndex(),
+            LuceneTestHelper.CreateStoreDocuments());
+
+        // Portland is the *second* point of "Coast To Coast", so a reader that only inspected
+        // one point per document would miss this match.
+        var names = Search(helper, $"geo.distance(Locations, {Seattle}) le 300");
+
+        Assert.Equal(["Coast To Coast", "Puget Chain"], names);
+    }
+
+    [Fact]
+    public void GeoDistance_OnEmptyCollection_DoesNotMatch()
+    {
+        using var helper = new LuceneTestHelper(
+            LuceneTestHelper.CreateStoreIndex(),
+            LuceneTestHelper.CreateStoreDocuments());
+
+        // An empty collection has no element to satisfy the predicate, so it never matches,
+        // however large the radius.
+        var names = Search(helper, $"geo.distance(Locations, {Seattle}) le 20000");
+
+        Assert.DoesNotContain("No Locations", names);
+    }
+
+    [Fact]
+    public void GeoDistance_InAnyLambda_MatchesWhenAnyPointIsInRange()
+    {
+        using var helper = new LuceneTestHelper(
+            LuceneTestHelper.CreateStoreIndex(),
+            LuceneTestHelper.CreateStoreDocuments());
+
+        // The lambda form is how Azure documents this filter for collections; the range
+        // variable resolves back to the collection's field path.
+        var names = Search(helper, $"Locations/any(loc: geo.distance(loc, {Seattle}) le 20)");
+
+        Assert.Equal(["Puget Chain"], names);
+    }
+
+    [Fact]
+    public void GeoDistance_InAllLambda_RequiresEveryPointToBeFarAway()
+    {
+        using var helper = new LuceneTestHelper(
+            LuceneTestHelper.CreateStoreIndex(),
+            LuceneTestHelper.CreateStoreDocuments());
+
+        // all(...) is compiled as ¬any(¬P), so "every point is more than 300km away" excludes
+        // the chains with a Puget Sound or Portland branch. Azure restricts geo.distance under
+        // all(...) to gt/ge, which is what this uses.
+        var names = Search(helper, $"Locations/all(loc: geo.distance(loc, {Seattle}) gt 300)");
+
+        Assert.Equal(["East Coast Only", "No Locations"], names);
+    }
+
+    [Fact]
+    public async Task OrderBy_GeoDistance_OnCollectionField_Throws()
+    {
+        var index = LuceneTestHelper.CreateStoreIndex();
+
+        var (helper, searcher) = BuildSearcher(index, []);
+        using var _ = helper;
+
+        // Azure cannot sort on a collection: there is no single distance to order by.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => searcher.Search(index, new SearchRequest
+        {
+            Search = "*",
+            Orderby = $"geo.distance(Locations, {Seattle}) asc",
+            Top = 50
+        }));
 
         Assert.Contains("Collection(Edm.GeographyPoint)", ex.Message);
     }
 
     [Fact]
-    public void GeoDistance_OnCollectionField_Throws()
+    public void GeoIntersects_InAnyLambda_MatchesWhenAnyPointIsInsidePolygon()
     {
-        var index = LuceneTestHelper.CreateCityIndex();
-        index.Fields.Add(new SearchField
-        {
-            Name = "Locations",
-            Type = "Collection(Edm.GeographyPoint)",
-            Filterable = true
-        });
+        using var helper = new LuceneTestHelper(
+            LuceneTestHelper.CreateStoreIndex(),
+            LuceneTestHelper.CreateStoreDocuments());
 
+        // A box around the Puget Sound area, wound counterclockwise.
+        const string pugetSound =
+            "geography'POLYGON((-122.5 47.4, -122.1 47.4, -122.1 47.8, -122.5 47.8, -122.5 47.4))'";
+
+        var names = Search(helper, $"Locations/any(loc: geo.intersects(loc, {pugetSound}))");
+
+        Assert.Equal(["Puget Chain"], names);
+    }
+
+    /// <summary>
+    /// Runs an OData filter against the helper's index and returns the matching names, sorted
+    /// so the assertions do not depend on document order.
+    /// </summary>
+    private static List<string> Search(LuceneTestHelper helper, string filter)
+    {
         var parser = new UriQueryExpressionParser(100);
+        var query = parser.ParseFilter(filter).Accept(new ODataQueryVisitor(helper.Index));
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
-            parser.ParseFilter($"geo.distance(Locations, {Seattle}) le 10").Accept(new ODataQueryVisitor(index)));
+        var searcher = helper.CreateSearcher();
+        var hits = searcher.Search(query, 100);
 
-        Assert.Contains("Collection(Edm.GeographyPoint)", ex.Message);
+        return hits.ScoreDocs
+            .Select(hit => searcher.Doc(hit.Doc).Get("Name"))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
     }
 
     // ===== Distance math =====

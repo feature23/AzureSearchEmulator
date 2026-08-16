@@ -1,6 +1,8 @@
+using System.Buffers.Binary;
 using System.Text.Json.Nodes;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
+using Lucene.Net.Util;
 using Spatial4n.Context;
 using Spatial4n.Distance;
 using Spatial4n.Shapes;
@@ -43,6 +45,48 @@ public static class GeoSupport
     /// Longitude counterpart to <see cref="GetLatFieldName"/>.
     /// </summary>
     public static string GetLonFieldName(string fieldName) => "__azs_geo_lon__" + fieldName;
+
+    /// <summary>
+    /// Doc values holding every point of a field, so that all the points of a multi-valued
+    /// <c>Collection(Edm.GeographyPoint)</c> can be read at filter time.
+    /// </summary>
+    public static string GetPointDocValuesFieldName(string fieldName) => "__azs_geo_dv__" + fieldName;
+
+    /// <summary>
+    /// Packs a point into the 16 bytes stored in the doc values field.
+    /// </summary>
+    /// <remarks>
+    /// Both coordinates are written as full IEEE-754 doubles, so a point round-trips exactly
+    /// and the geometry tests see the coordinates the caller supplied. Big-endian ordering
+    /// keeps the byte comparison that <see cref="SortedSetDocValuesField"/> uses well-defined,
+    /// though the ordering itself carries no meaning here: the values are only ever read back
+    /// by document, never range-scanned.
+    /// </remarks>
+    public static byte[] EncodePointBytes(double lon, double lat)
+    {
+        var bytes = new byte[16];
+
+        BinaryPrimitives.WriteInt64BigEndian(bytes, BitConverter.DoubleToInt64Bits(lon));
+        BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(8), BitConverter.DoubleToInt64Bits(lat));
+
+        return bytes;
+    }
+
+    /// <summary>
+    /// Inverse of <see cref="EncodePointBytes"/>.
+    /// </summary>
+    public static (double Lon, double Lat) DecodePointBytes(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length < 16)
+        {
+            throw new InvalidOperationException(
+                $"A packed geography point must be 16 bytes, but got {bytes.Length}.");
+        }
+
+        return (
+            BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(bytes)),
+            BitConverter.Int64BitsToDouble(BinaryPrimitives.ReadInt64BigEndian(bytes[8..])));
+    }
 
     /// <summary>
     /// Parses a GeoJSON Point object from a document body.
@@ -100,6 +144,60 @@ public static class GeoSupport
 
         yield return new DoubleField(GetLatFieldName(fieldName), lat, stored);
         yield return new DoubleField(GetLonFieldName(fieldName), lon, stored);
+
+        // The DoubleFields above drive the bounding-box range queries, but their field cache
+        // exposes only one value per document, which is not enough for
+        // Collection(Edm.GeographyPoint). The doc values added here keep every point of a
+        // multi-valued field readable at filter time. They are written for single points too,
+        // so both field types share one read path.
+        //
+        // Both coordinates are packed into one value rather than written to two parallel
+        // fields: the doc values are sorted per field, so parallel fields would lose which
+        // latitude belongs to which longitude as soon as a document held more than one point.
+        //
+        // SortedSetDocValues is the multi-valued facility available in this Lucene version
+        // (there is no SortedNumericDocValues), so the packed point is written as its
+        // big-endian bytes, which keeps one entry per point.
+        yield return new SortedSetDocValuesField(
+            GetPointDocValuesFieldName(fieldName),
+            new BytesRef(EncodePointBytes(lon, lat)));
+    }
+
+    /// <summary>
+    /// Builds a per-document accessor that yields every point indexed for a field, which is
+    /// one point for <c>Edm.GeographyPoint</c> and any number for
+    /// <c>Collection(Edm.GeographyPoint)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Returns an empty list for a document with no value, which is how the geo filters see a
+    /// null or empty field.
+    /// </remarks>
+    public static Func<int, IReadOnlyList<(double Lon, double Lat)>> GetPointReader(
+        AtomicReader reader,
+        string fieldName)
+    {
+        var values = reader.GetSortedSetDocValues(GetPointDocValuesFieldName(fieldName));
+
+        if (values is null)
+        {
+            return _ => [];
+        }
+
+        return doc =>
+        {
+            values.SetDocument(doc);
+
+            var points = new List<(double Lon, double Lat)>();
+            var term = new BytesRef();
+
+            for (var ord = values.NextOrd(); ord != SortedSetDocValues.NO_MORE_ORDS; ord = values.NextOrd())
+            {
+                values.LookupOrd(ord, term);
+                points.Add(DecodePointBytes(term.Bytes.AsSpan(term.Offset, term.Length)));
+            }
+
+            return points;
+        };
     }
 
     /// <summary>
