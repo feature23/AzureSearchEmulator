@@ -27,6 +27,14 @@ public class GeoDocIdSet(int maxDoc, IBits? acceptDocs, Func<int, bool> match) :
 
         public override int Advance(int target)
         {
+            // Advance may legitimately be called with NO_MORE_DOCS, and int.MaxValue + 1
+            // would wrap around to int.MinValue and restart the scan from the beginning,
+            // re-emitting every match. Exhaustion has to be sticky.
+            if (_doc == NO_MORE_DOCS || target >= maxDoc)
+            {
+                return _doc = NO_MORE_DOCS;
+            }
+
             for (var doc = target; doc < maxDoc; doc++)
             {
                 if (acceptDocs?.Get(doc) == false)

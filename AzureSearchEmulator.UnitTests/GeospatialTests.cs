@@ -550,6 +550,21 @@ public class GeospatialTests : IDisposable
     }
 
     [Fact]
+    public void GeoIntersects_PolygonAcrossTheAntimeridian_MatchesTheNarrowBand()
+    {
+        // The rectangle Microsoft documents as the supported dateline case. Read naively,
+        // its longitudes run from -179 to 179 and would select everything except the band
+        // it is meant to cover, so the ring has to be unrolled before it is used.
+        var ids = SearchPoints(
+            "geo.intersects(Location, geography'POLYGON((179 65, 179 66, -179 66, -179 65, 179 65))')",
+            ("east", 179.5, 65.5),
+            ("west", -179.5, 65.5),
+            ("far", 0.0, 65.5));
+
+        Assert.Equal(["east", "west"], ids);
+    }
+
+    [Fact]
     public void GeoDistance_LargerThanHalfTheGlobe_MatchesEverything()
     {
         var ids = SearchPoints(
@@ -558,6 +573,36 @@ public class GeospatialTests : IDisposable
             ("b", 179, 0));
 
         Assert.Equal(["a", "b"], ids);
+    }
+
+    // ===== Iterator contract =====
+
+    [Fact]
+    public void GeoDocIdSet_StaysExhausted()
+    {
+        // NextDoc() past the end computes Advance(NO_MORE_DOCS + 1), which overflows to
+        // int.MinValue. Without a guard the scan restarts from the bottom and re-emits every
+        // match, so exhaustion has to be sticky.
+        var set = new GeoDocIdSet(3, acceptDocs: null, match: _ => true);
+        var iterator = set.GetIterator();
+
+        Assert.Equal(-1, iterator.DocID);
+        Assert.Equal(0, iterator.NextDoc());
+        Assert.Equal(1, iterator.NextDoc());
+        Assert.Equal(2, iterator.NextDoc());
+        Assert.Equal(DocIdSetIterator.NO_MORE_DOCS, iterator.NextDoc());
+
+        // Any further call must keep reporting exhaustion.
+        Assert.Equal(DocIdSetIterator.NO_MORE_DOCS, iterator.NextDoc());
+        Assert.Equal(DocIdSetIterator.NO_MORE_DOCS, iterator.Advance(0));
+    }
+
+    [Fact]
+    public void GeoDocIdSet_AdvancePastEnd_ReportsExhaustion()
+    {
+        var iterator = new GeoDocIdSet(3, acceptDocs: null, match: _ => true).GetIterator();
+
+        Assert.Equal(DocIdSetIterator.NO_MORE_DOCS, iterator.Advance(3));
     }
 
     // ===== Collection(Edm.GeographyPoint) =====

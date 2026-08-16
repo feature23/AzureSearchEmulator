@@ -120,8 +120,9 @@ public static class GeoSupport
                 "A polygon must have at least four points, where the first and last are the same.");
         }
 
-        if (Math.Abs(ring[0].Lon - ring[^1].Lon) > double.Epsilon
-            || Math.Abs(ring[0].Lat - ring[^1].Lat) > double.Epsilon)
+        // Coordinates come straight from the literal without arithmetic applied, so the
+        // first and last points of a closed ring are bit-identical rather than merely close.
+        if (ring[0].Lon != ring[^1].Lon || ring[0].Lat != ring[^1].Lat)
         {
             throw new InvalidOperationException(
                 "A polygon must be closed; its first and last points must be the same.");
@@ -164,18 +165,35 @@ public static class GeoSupport
     /// </summary>
     /// <remarks>
     /// This treats the ring edges as straight lines in lon/lat space rather than as great
-    /// circles. That matches how Azure Search behaves for the small viewport-sized polygons
-    /// these filters are used for, and keeps antimeridian-spanning rectangles working when
-    /// their coordinates are expressed consistently.
+    /// circles, which matches how Azure Search behaves for the viewport-sized polygons these
+    /// filters are used for. Rings that cross the antimeridian are unrolled onto a
+    /// continuous longitude axis first, so a rectangle like
+    /// <c>POLYGON((179 65, 179 66, -179 66, -179 65, 179 65))</c> is treated as the narrow
+    /// band around the dateline rather than as a band spanning the rest of the globe.
     /// </remarks>
     public static bool IsPointInPolygon(IReadOnlyList<(double Lon, double Lat)> ring, double lon, double lat)
     {
+        var unrolled = Unroll(ring);
+
+        // The ring may now extend past 180 degrees, so the test point has to be shifted onto
+        // the same revolution before it is compared.
+        var (minLon, maxLon, _, _) = GetPolygonBounds(unrolled);
+
+        if (lon < minLon && lon + 360 <= maxLon)
+        {
+            lon += 360;
+        }
+        else if (lon > maxLon && lon - 360 >= minLon)
+        {
+            lon -= 360;
+        }
+
         var inside = false;
 
-        for (int i = 0, j = ring.Count - 1; i < ring.Count; j = i++)
+        for (int i = 0, j = unrolled.Count - 1; i < unrolled.Count; j = i++)
         {
-            var (xi, yi) = (ring[i].Lon, ring[i].Lat);
-            var (xj, yj) = (ring[j].Lon, ring[j].Lat);
+            var (xi, yi) = (unrolled[i].Lon, unrolled[i].Lat);
+            var (xj, yj) = (unrolled[j].Lon, unrolled[j].Lat);
 
             // Does the edge straddle the test point's latitude, and if so, is the crossing
             // to the right of the point?
@@ -190,8 +208,47 @@ public static class GeoSupport
     }
 
     /// <summary>
+    /// Rewrites a ring that crosses the antimeridian onto a continuous longitude axis, so
+    /// that consecutive points never jump by more than 180 degrees. Longitudes may end up
+    /// outside the normal -180..180 range as a result.
+    /// </summary>
+    /// <remarks>
+    /// A ring that does not cross the dateline is returned unchanged.
+    /// </remarks>
+    public static IReadOnlyList<(double Lon, double Lat)> Unroll(IReadOnlyList<(double Lon, double Lat)> ring)
+    {
+        var unrolled = new List<(double Lon, double Lat)>(ring.Count) { ring[0] };
+        var offset = 0d;
+
+        for (var i = 1; i < ring.Count; i++)
+        {
+            var delta = ring[i].Lon - ring[i - 1].Lon;
+
+            // A jump of more than half the globe between adjacent points is the dateline
+            // being crossed, not a genuine traversal the long way around.
+            if (delta > 180)
+            {
+                offset -= 360;
+            }
+            else if (delta < -180)
+            {
+                offset += 360;
+            }
+
+            unrolled.Add((ring[i].Lon + offset, ring[i].Lat));
+        }
+
+        return unrolled;
+    }
+
+    /// <summary>
     /// Axis-aligned bounds of a ring, used to pre-filter candidates before the exact test.
     /// </summary>
+    /// <remarks>
+    /// The bounds are taken from the unrolled ring, so for an antimeridian-spanning polygon
+    /// the returned longitudes can fall outside -180..180. Callers are expected to split
+    /// such a range into two spans either side of the dateline.
+    /// </remarks>
     public static (double MinLon, double MaxLon, double MinLat, double MaxLat) GetPolygonBounds(
         IReadOnlyList<(double Lon, double Lat)> ring) =>
         (ring.Min(i => i.Lon), ring.Max(i => i.Lon), ring.Min(i => i.Lat), ring.Max(i => i.Lat));

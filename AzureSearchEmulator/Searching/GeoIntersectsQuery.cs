@@ -16,7 +16,36 @@ public class GeoIntersectsQuery(string fieldName, IReadOnlyList<(double Lon, dou
 {
     public override Query Rewrite(IndexReader reader)
     {
-        var (minLon, maxLon, minLat, maxLat) = GeoSupport.GetPolygonBounds(ring);
+        // Bounds are taken from the unrolled ring so that a polygon crossing the
+        // antimeridian yields the narrow band around the dateline rather than its complement.
+        var (minLon, maxLon, minLat, maxLat) = GeoSupport.GetPolygonBounds(GeoSupport.Unroll(ring));
+
+        var lonField = GeoSupport.GetLonFieldName(fieldName);
+
+        // Unrolling can push the bounds past 180 degrees, which no indexed longitude will
+        // ever match directly, so the range is wrapped back and searched as two spans.
+        Query lonRange;
+
+        if (maxLon > 180)
+        {
+            lonRange = new BooleanQuery
+            {
+                { NumericRangeQuery.NewDoubleRange(lonField, minLon, 180d, true, true), Occur.SHOULD },
+                { NumericRangeQuery.NewDoubleRange(lonField, -180d, maxLon - 360, true, true), Occur.SHOULD }
+            };
+        }
+        else if (minLon < -180)
+        {
+            lonRange = new BooleanQuery
+            {
+                { NumericRangeQuery.NewDoubleRange(lonField, minLon + 360, 180d, true, true), Occur.SHOULD },
+                { NumericRangeQuery.NewDoubleRange(lonField, -180d, maxLon, true, true), Occur.SHOULD }
+            };
+        }
+        else
+        {
+            lonRange = NumericRangeQuery.NewDoubleRange(lonField, minLon, maxLon, true, true);
+        }
 
         var candidates = new BooleanQuery
         {
@@ -25,11 +54,7 @@ public class GeoIntersectsQuery(string fieldName, IReadOnlyList<(double Lon, dou
                     GeoSupport.GetLatFieldName(fieldName), minLat, maxLat, true, true),
                 Occur.MUST
             },
-            {
-                NumericRangeQuery.NewDoubleRange(
-                    GeoSupport.GetLonFieldName(fieldName), minLon, maxLon, true, true),
-                Occur.MUST
-            }
+            { lonRange, Occur.MUST }
         };
 
         var exact = new FilteredQuery(
