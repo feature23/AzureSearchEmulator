@@ -47,7 +47,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `$top` - paging; take next X records, defaults to 50
   * `$filter` - OData filter expression to limit results, i.e. `(Type eq 'Comment') or (Type eq 'File')`,
     including the geospatial functions `geo.distance` and `geo.intersects`, i.e.
-    `geo.distance(Location, geography'POINT(-122.131577 47.678581)') le 10`
+    `geo.distance(Location, geography'POINT(-122.131577 47.678581)') le 10`, and complex type
+    sub-field paths, i.e. `Address/City eq 'Seattle'`
   * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`, including
     sorting by distance, i.e. `geo.distance(Location, geography'POINT(-122.131577 47.678581)') asc`
   * `highlight` - Comma-delimited list of fields to highlight, supports optional max highlight count i.e. `Body-10,Title-5`
@@ -74,6 +75,37 @@ normally written with a lambda, i.e.
 `Locations/any(loc: geo.distance(loc, geography'POINT(-122.131577 47.678581)') le 10)`.
 Collections cannot be sorted, so `$orderby` still requires a single `Edm.GeographyPoint`
 field.
+
+### Complex type support
+
+Fields of type `Edm.ComplexType` and `Collection(Edm.ComplexType)` can be indexed, filtered,
+searched, and retrieved. Sub-fields are declared under a field's `fields` property and are
+addressed by a slash-delimited path, exactly as in Azure Search:
+
+```
+$filter=Address/City eq 'Seattle'
+$orderby=Address/Geo/Lat asc
+searchFields=Address/City
+```
+
+Complex types may be nested to any depth, and a `Collection(Edm.ComplexType)` may itself
+contain primitive collections.
+
+A `Collection(Edm.ComplexType)` is filtered with a lambda, so that a document matches when
+one of its elements satisfies the predicate:
+
+```
+$filter=Rooms/any(r: r/Type eq 'Deluxe')
+$filter=Rooms/any(r: r/Tags/any(t: t eq 'wifi'))
+```
+
+Two limitations are worth noting, both matching Azure Search's own behavior:
+
+* Sub-fields of a `Collection(Edm.ComplexType)` cannot be sorted on, since a document has one
+  value per element rather than a single value to order by.
+* Inside `all(...)` over a collection, use `ne` or a comparison operator. `all(r: r/X eq 'y')`
+  is rejected, because answering it would require knowing whether an element holds some
+  *other* value, which the per-value indexing model cannot express.
 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.

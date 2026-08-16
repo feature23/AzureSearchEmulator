@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.SearchData;
@@ -53,6 +54,11 @@ public class IndexesController(
             return BadRequest(ModelState);
         }
 
+        if (ValidateComplexFields(index) is { } complexError)
+        {
+            return BadRequest(complexError);
+        }
+
         try
         {
             await searchIndexRepository.Create(index);
@@ -87,6 +93,11 @@ public class IndexesController(
         {
             ModelState.AddModelError(nameof(index.Name), "The index name in the request body must match the name in the URL.");
             return BadRequest(ModelState);
+        }
+
+        if (ValidateComplexFields(index) is { } complexError)
+        {
+            return BadRequest(complexError);
         }
 
         var existing = await searchIndexRepository.Get(key);
@@ -136,5 +147,30 @@ public class IndexesController(
         await searchIndexRepository.Delete(index);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Checks the index's complex fields, returning an error message when one is malformed,
+    /// or null when the schema is acceptable.
+    /// </summary>
+    /// <remarks>
+    /// Azure Search rejects these at index creation rather than failing later during
+    /// indexing, so they are caught here to keep the failure in the same place.
+    /// </remarks>
+    private static string? ValidateComplexFields(SearchIndex index)
+    {
+        try
+        {
+            foreach (var field in index.Fields)
+            {
+                ComplexTypeSupport.ValidateComplexField(field);
+            }
+
+            return null;
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message;
+        }
     }
 }

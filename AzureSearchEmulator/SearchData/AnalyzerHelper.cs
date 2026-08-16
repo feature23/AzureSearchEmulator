@@ -31,6 +31,7 @@ using Lucene.Net.Analysis.Ru;
 using Lucene.Net.Analysis.Standard;
 using Lucene.Net.Analysis.Sv;
 using Lucene.Net.Analysis.Tr;
+using AzureSearchEmulator.Indexing;
 using Lucene.Net.Util;
 using SearchField = AzureSearchEmulator.Models.SearchField;
 
@@ -83,21 +84,26 @@ public static class AnalyzerHelper
     }
 
     public static Analyzer GetPerFieldSearchAnalyzer(IList<SearchField> fields)
-    {
-        var analyzers = fields
-            .Select(i => (i.Name, Analyzer: i.SearchAnalyzer ?? i.Analyzer))
-            .Where(i => i.Analyzer != null)
-            .ToDictionary(i => i.Name, i => GetAnalyzer(i.Analyzer));
-
-        return new PerFieldAnalyzerWrapper(new StandardAnalyzer(Version), analyzers);
-    }
+        => GetPerFieldAnalyzer(fields, i => i.SearchAnalyzer ?? i.Analyzer);
 
     public static Analyzer GetPerFieldIndexAnalyzer(IList<SearchField> fields)
+        => GetPerFieldAnalyzer(fields, i => i.IndexAnalyzer ?? i.Analyzer);
+
+    /// <summary>
+    /// Builds a per-field analyzer keyed by each leaf field's Lucene field name.
+    /// </summary>
+    /// <remarks>
+    /// Sub-fields of a complex type are indexed under their full slash-delimited path, so
+    /// they are registered under that path here too — keying them by their bare name would
+    /// silently leave them on the default analyzer.
+    /// </remarks>
+    private static Analyzer GetPerFieldAnalyzer(IList<SearchField> fields, Func<SearchField, string?> selectAnalyzer)
     {
         var analyzers = fields
-            .Select(i => (i.Name, Analyzer: i.IndexAnalyzer ?? i.Analyzer))
+            .SelectMany(i => ComplexTypeSupport.EnumerateLeafFields(i))
+            .Select(i => (i.Path, Analyzer: selectAnalyzer(i.Field)))
             .Where(i => i.Analyzer != null)
-            .ToDictionary(i => i.Name, i => GetAnalyzer(i.Analyzer));
+            .ToDictionary(i => i.Path, i => GetAnalyzer(i.Analyzer));
 
         return new PerFieldAnalyzerWrapper(new StandardAnalyzer(Version), analyzers);
     }

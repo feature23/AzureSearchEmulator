@@ -1,4 +1,5 @@
-﻿using AzureSearchEmulator.Models;
+﻿using AzureSearchEmulator.Indexing;
+using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
 using Lucene.Net.Analysis;
 using Lucene.Net.Index;
@@ -93,10 +94,38 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
     private Query InvertBinary(BinaryOperatorToken bin)
     {
+        // Equality is inverted here directly rather than by routing through NotEqual.
+        // HandleNotEqualComparison wraps its result in its own MUST_NOT, and VisitLambda
+        // negates again on the way out, so the two cancel and all(...) would silently
+        // degrade into any(...).
+        if (bin.OperatorKind is BinaryOperatorKind.Equal or BinaryOperatorKind.NotEqual)
+        {
+            if (!TryResolveComparisonPath(bin.Left, out var equalPath) || bin.Right is not LiteralToken equalLiteral)
+            {
+                throw new NotImplementedException("Only 'field op literal' comparisons are supported inside all(...)");
+            }
+
+            EnsureFilterable(equalPath);
+
+            // The caller wraps whatever comes back in MUST_NOT. For "all(t: t ne 'x')" the
+            // predicate to exclude is "some value is 'x'", which is exactly the equality
+            // query, so it is returned un-negated.
+            if (bin.OperatorKind == BinaryOperatorKind.NotEqual)
+            {
+                return HandleEqualComparison(equalPath, CoerceLiteralToFieldType(equalPath, equalLiteral));
+            }
+
+            // "all(t: t eq 'x')" would need "every value is 'x'", i.e. the document has 'x'
+            // and holds no other value. Values of a multi-valued field are indexed as
+            // independent terms under one field name, so there is no way to ask Lucene
+            // whether some *other* value is also present. Azure Search likewise restricts
+            // all(...) over a collection to 'ne' and the comparison operators.
+            throw new NotImplementedException(
+                "all(...) with 'eq' over a collection is not supported; use 'ne' or a comparison operator.");
+        }
+
         var inverted = bin.OperatorKind switch
         {
-            BinaryOperatorKind.Equal => BinaryOperatorKind.NotEqual,
-            BinaryOperatorKind.NotEqual => BinaryOperatorKind.Equal,
             BinaryOperatorKind.LessThan => BinaryOperatorKind.GreaterThanOrEqual,
             BinaryOperatorKind.LessThanOrEqual => BinaryOperatorKind.GreaterThan,
             BinaryOperatorKind.GreaterThan => BinaryOperatorKind.LessThanOrEqual,
@@ -110,16 +139,14 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
     private string ResolveLambdaPath(QueryToken? parent)
     {
-        // Build a slash-joined path from chained InnerPathTokens; for our flat schema this
-        // is normally just the collection field's name.
-        return parent switch
+        // The collection being iterated, i.e. "Rooms" in "Rooms/any(...)" or the nested
+        // "Rooms/Tags" in "Rooms/any(r: r/Tags/any(t: t eq 'wifi'))".
+        if (parent is null)
         {
-            EndPathToken end => end.Identifier,
-            InnerPathToken inner => inner.NextToken == null
-                ? inner.Identifier
-                : ResolveLambdaPath(inner.NextToken) + "/" + inner.Identifier,
-            _ => throw new NotImplementedException("Lambda parent must be a path token")
-        };
+            throw new NotImplementedException("Lambda parent must be a path token");
+        }
+
+        return CanonicalizePath(ResolvePathPrefix(parent));
     }
 
     public Query Visit(BinaryOperatorToken tokenIn)
@@ -151,6 +178,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             && tokenIn.Right is LiteralToken literalToken)
         {
             EnsureFilterable(path);
+            literalToken = CoerceLiteralToFieldType(path, literalToken);
             return tokenIn.OperatorKind switch
             {
                 BinaryOperatorKind.Equal => HandleEqualComparison(path, literalToken),
@@ -171,6 +199,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             } && TryResolveComparisonPath(negatedOperand, out var negatedPath))
         {
             EnsureFilterable(negatedPath);
+            negatedLiteral = CoerceLiteralToFieldType(negatedPath, negatedLiteral);
             var equalQuery = tokenIn.OperatorKind switch
             {
                 BinaryOperatorKind.Equal => HandleEqualComparison(negatedPath, negatedLiteral),
@@ -197,10 +226,13 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
     private bool TryResolveComparisonPath(QueryToken token, out string path)
     {
-        // A bare end-path is the simple case: "Field eq 'value'".
+        // A bare end-path is the simple case: "Field eq 'value'". Inside a complex type it
+        // arrives as a chain, i.e. "Address/City", which NextToken walks up.
         if (token is EndPathToken end)
         {
-            path = end.Identifier;
+            path = CanonicalizePath(end.NextToken is null
+                ? end.Identifier
+                : ResolvePathPrefix(end.NextToken) + ComplexTypeSupport.PathSeparator + end.Identifier);
             return true;
         }
 
@@ -219,16 +251,64 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         return false;
     }
 
+    /// <summary>
+    /// Resolves the portion of a path that precedes a leaf, i.e. the <c>Address</c> of
+    /// <c>Address/City</c>, or the collection path a lambda's range variable stands for in
+    /// <c>Rooms/any(r: r/Type eq 'Deluxe')</c>.
+    /// </summary>
+    private string ResolvePathPrefix(QueryToken token)
+    {
+        switch (token)
+        {
+            case RangeVariableToken rv when _lambdaContexts.Count > 0:
+            {
+                // "r" in "r/Type" stands for an element of the collection, which is indexed
+                // under the collection's own path, so "r/Type" becomes "Rooms/Type".
+                var ctx = _lambdaContexts.FirstOrDefault(c =>
+                    string.Equals(rv.Name, c.Parameter, StringComparison.Ordinal));
+
+                if (ctx is not null)
+                {
+                    return ctx.Path;
+                }
+
+                break;
+            }
+
+            case InnerPathToken inner:
+                return inner.NextToken is null
+                    ? inner.Identifier
+                    : ResolvePathPrefix(inner.NextToken) + ComplexTypeSupport.PathSeparator + inner.Identifier;
+
+            case EndPathToken end:
+                return end.NextToken is null
+                    ? end.Identifier
+                    : ResolvePathPrefix(end.NextToken) + ComplexTypeSupport.PathSeparator + end.Identifier;
+        }
+
+        throw new NotImplementedException($"Unable to resolve field path from a {token.GetType().Name}.");
+    }
+
     private void EnsureFilterable(string path)
     {
         if (_index is null) return;
-        var field = _index.Fields.FirstOrDefault(f => string.Equals(f.Name, path, StringComparison.OrdinalIgnoreCase));
+        // Sub-fields of a complex type are addressed by their slash-delimited path.
+        var field = ComplexTypeSupport.FindFieldByPath(_index, path);
         if (field is null) return;
         if (!field.Filterable)
         {
-            throw new InvalidOperationException($"Field '{field.Name}' is not filterable.");
+            throw new InvalidOperationException($"Field '{path}' is not filterable.");
         }
     }
+
+    /// <summary>
+    /// Rewrites a field path to the casing the schema declares, since a filter may name a
+    /// field in any casing but Lucene field names are case-sensitive.
+    /// </summary>
+    private string CanonicalizePath(string path)
+        => _index is not null && ComplexTypeSupport.TryResolvePath(_index, path, out _, out var canonical)
+            ? canonical
+            : path;
 
     private static Occur GetOccurFromOperator(BinaryOperatorKind operatorKind)
     {
@@ -238,6 +318,52 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             BinaryOperatorKind.And => Occur.MUST,
             _ => throw new NotImplementedException()
         };
+    }
+
+    /// <summary>
+    /// Rewrites a numeric literal to the CLR type matching the field's declared Edm type.
+    /// </summary>
+    /// <remarks>
+    /// Lucene encodes each numeric width differently, so a range query has to be built from
+    /// the same width the values were indexed with. The OData parser types a literal from
+    /// its written form alone — <c>100</c> arrives as an <see cref="int"/> — so comparing it
+    /// against an <c>Edm.Double</c> field would otherwise build an Int32 range that silently
+    /// matches nothing.
+    /// </remarks>
+    private LiteralToken CoerceLiteralToFieldType(string path, LiteralToken literalToken)
+    {
+        if (_index is null)
+        {
+            return literalToken;
+        }
+
+        var field = ComplexTypeSupport.FindFieldByPath(_index, path);
+
+        if (field is null)
+        {
+            return literalToken;
+        }
+
+        var type = field.IsCollection() ? SearchFieldExtensions.GetCollectionElementType(field.Type) : field.Type;
+
+        // Only widen numerics; strings, booleans and dates already line up with how they
+        // were indexed.
+        if (!TryGetDouble(literalToken.Value, out var numeric))
+        {
+            return literalToken;
+        }
+
+        object? coerced = type switch
+        {
+            "Edm.Double" => numeric,
+            "Edm.Int64" => (long)numeric,
+            "Edm.Int32" when numeric is >= int.MinValue and <= int.MaxValue => (int)numeric,
+            _ => null
+        };
+
+        return coerced is null || coerced.Equals(literalToken.Value)
+            ? literalToken
+            : new LiteralToken(coerced);
     }
 
     private static Query HandleEqualComparison(string path, LiteralToken literalToken)
@@ -601,7 +727,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
     {
         if (_index is null) return;
 
-        var field = _index.Fields.FirstOrDefault(f => string.Equals(f.Name, path, StringComparison.OrdinalIgnoreCase));
+        var field = ComplexTypeSupport.FindFieldByPath(_index, path);
 
         if (field is null) return;
 
@@ -806,10 +932,11 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
         if (fieldsToSearch.Count == 0)
         {
-            // If no specific fields, use all searchable fields
-            fieldsToSearch = _index!.Fields
-                .Where(i => i.Searchable.GetValueOrDefault())
-                .Select(i => i.Name)
+            // If no specific fields, use all searchable fields, including the searchable
+            // sub-fields of complex types under their full paths.
+            fieldsToSearch = ComplexTypeSupport.EnumerateLeafFields(_index!)
+                .Where(i => i.Field.Searchable.GetValueOrDefault())
+                .Select(i => i.Path)
                 .ToList();
         }
 
@@ -852,9 +979,10 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
         var fields = searchFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        return _index.Fields
-            .Where(i => i.Searchable.GetValueOrDefault() && fields.Contains(i.Name, StringComparer.OrdinalIgnoreCase))
-            .Select(i => i.Name)
+        return ComplexTypeSupport.EnumerateLeafFields(_index)
+            .Where(i => i.Field.Searchable.GetValueOrDefault()
+                        && fields.Contains(i.Path, StringComparer.OrdinalIgnoreCase))
+            .Select(i => i.Path)
             .ToList();
     }
 

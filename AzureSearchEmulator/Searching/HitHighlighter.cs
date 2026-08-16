@@ -23,14 +23,14 @@ public class HitHighlighter
     {
         var results = new Dictionary<string, IList<string>>();
 
-        foreach (var (field, maxHighlights) in Fields)
+        foreach (var (field, maxHighlights, path) in Fields)
         {
-            var text = doc.Get(field.Name);
+            var text = doc.Get(path);
 
             if (string.IsNullOrEmpty(text))
                 continue;
 
-            var tokenStream = TokenSources.GetAnyTokenStream(reader, docId, field.Name, doc, AnalyzerHelper.GetAnalyzer(field.SearchAnalyzer ?? field.Analyzer));
+            var tokenStream = TokenSources.GetAnyTokenStream(reader, docId, path, doc, AnalyzerHelper.GetAnalyzer(field.SearchAnalyzer ?? field.Analyzer));
             var textFragments = _highlighter.GetBestTextFragments(tokenStream, text, false, maxHighlights);
 
             var fieldHighlights = (from textFragment in textFragments
@@ -39,7 +39,7 @@ public class HitHighlighter
 
             if (fieldHighlights.Count > 0)
             {
-                results[field.Name] = fieldHighlights;
+                results[path] = fieldHighlights;
             }
         }
 

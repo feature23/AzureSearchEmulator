@@ -60,3 +60,58 @@ public class TaggedProduct
 
     public required int[] Sizes { get; init; }
 }
+
+/// <summary>
+/// A hotel with a complex address and a collection of complex room objects, used to
+/// exercise Edm.ComplexType and Collection(Edm.ComplexType) support (issue #7) end-to-end
+/// through the Azure Search SDK.
+/// </summary>
+/// <remarks>
+/// Going through the SDK matters here: it serializes these nested objects into the shape
+/// Azure Search expects and deserializes the response back into them, so a document whose
+/// sub-fields were flattened without being reassembled correctly would fail to round-trip
+/// rather than pass unnoticed.
+/// </remarks>
+public class Hotel
+{
+    public required string Id { get; init; }
+
+    public required string Name { get; init; }
+
+    /// <summary>Nullable, so a hotel with no address covers the null-complex-value case.</summary>
+    public Address? Address { get; init; }
+
+    public Room[] Rooms { get; init; } = [];
+}
+
+/// <summary>A complex sub-object, itself containing a nested complex sub-object.</summary>
+public class Address
+{
+    public string? Street { get; init; }
+
+    public string? City { get; init; }
+
+    public string? PostalCode { get; init; }
+
+    public GeoCoordinates? Geo { get; init; }
+}
+
+/// <summary>Nested one level deeper, covering multi-level complex paths like Address/Geo/Lat.</summary>
+public class GeoCoordinates
+{
+    public double Lat { get; init; }
+
+    public double Lon { get; init; }
+}
+
+/// <summary>An element of a Collection(Edm.ComplexType), with a primitive collection of its own.</summary>
+public class Room
+{
+    public string? Type { get; init; }
+
+    public double BaseRate { get; init; }
+
+    public bool SmokingAllowed { get; init; }
+
+    public string[] Tags { get; init; } = [];
+}
