@@ -56,6 +56,9 @@ builder.Services.AddTransient(sp =>
 builder.Services.AddTransient<ISearchIndexRepository, FileSearchIndexRepository>();
 builder.Services.AddSingleton<ILuceneDirectoryFactory, SimpleFSDirectoryFactory>();
 builder.Services.AddSingleton<ILuceneIndexReaderFactory, LuceneDirectoryReaderFactory>();
+// Singleton so writers stay open across requests; the container disposes it on shutdown,
+// committing any pending changes.
+builder.Services.AddSingleton<ILuceneIndexWriterFactory, LuceneNetIndexWriterFactory>();
 builder.Services.AddTransient<IIndexSearcher, LuceneNetIndexSearcher>();
 builder.Services.AddSingleton<ISearchIndexer, LuceneNetSearchIndexer>();
 
@@ -69,35 +72,69 @@ if (builder.Environment.IsDevelopment())
 app.UseCors(CorsDefaultPolicyName);
 app.UseODataRouteDebug();
 app.UseODataQueryRequest();
-app.UseODataBatching();
 
-app.UseRouting();
+var requestLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AzureSearchEmulator.Requests");
 
+// Registered BEFORE UseODataBatching so the sub-requests an OData $batch dispatches also
+// pass through here. After it, a batched indexing call — a documented Azure Search usage
+// pattern — produced no log line at all.
 app.Use(async (context, next) =>
 {
     var method = context.Request.Method;
     var path = context.Request.Path;
     var queryString = context.Request.QueryString.ToString();
-    var fullPath = string.IsNullOrEmpty(queryString) ? path.ToString() : $"{path}{queryString}";
+    // Method, path and query string are all caller-controlled; strip control characters so
+    // an embedded newline cannot forge additional log lines.
+    var fullPath = SanitizeForLog(string.IsNullOrEmpty(queryString) ? path.ToString() : $"{path}{queryString}");
+    method = SanitizeForLog(method);
     try
     {
         await next();
-        // Status code logged AFTER the pipeline so a rejected request is
-        // visible in the log — a silent 4xx/5xx here cost a full afternoon
-        // of diagnosis when an index merge was dropped without a trace.
-        Console.WriteLine($"[HTTP {method} {context.Response.StatusCode}] {fullPath}");
+
+        // Status code logged AFTER the pipeline so a rejected request is visible — a
+        // silent 4xx/5xx is what makes a dropped index merge hard to diagnose. Non-success
+        // logs at Warning so it surfaces without Information enabled.
+        if (context.Response.StatusCode >= 400)
+        {
+            requestLogger.LogWarning("[HTTP {Method} {StatusCode}] {Path}", method, context.Response.StatusCode, fullPath);
+        }
+        else
+        {
+            requestLogger.LogInformation("[HTTP {Method} {StatusCode}] {Path}", method, context.Response.StatusCode, fullPath);
+        }
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[HTTP {method} EXCEPTION] {fullPath} — {ex.GetType().Name}: {ex.Message}");
+        requestLogger.LogError(ex, "[HTTP {Method} EXCEPTION] {Path}", method, fullPath);
         throw;
     }
 });
+
+app.UseODataBatching();
+
+app.UseRouting();
 
 app.MapControllers();
 
 await app.RunAsync();
 return;
+
+static string SanitizeForLog(string value)
+{
+    if (string.IsNullOrEmpty(value))
+    {
+        return string.Empty;
+    }
+
+    return string.Create(value.Length, value, static (span, source) =>
+    {
+        for (var i = 0; i < source.Length; i++)
+        {
+            var c = source[i];
+            span[i] = char.IsControl(c) ? ' ' : c;
+        }
+    });
+}
 
 static IEdmModel GetEdmModel()
 {

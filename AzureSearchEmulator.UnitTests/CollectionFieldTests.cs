@@ -483,6 +483,7 @@ public class LuceneNetSearchIndexer_CollectionTests : IDisposable
 {
     private readonly RAMDirectory _directory = new();
     private readonly SearchIndex _index;
+    private readonly LuceneNetIndexWriterFactory _writerFactory;
     private readonly LuceneNetSearchIndexer _indexer;
     private readonly LuceneNetIndexSearcher _searcher;
 
@@ -501,11 +502,17 @@ public class LuceneNetSearchIndexer_CollectionTests : IDisposable
         };
 
         var factory = new SharedDirectoryFactory(_directory);
-        _indexer = new LuceneNetSearchIndexer(factory, factory);
+        _writerFactory = new LuceneNetIndexWriterFactory(factory);
+        _indexer = new LuceneNetSearchIndexer(_writerFactory, factory);
         _searcher = new LuceneNetIndexSearcher(factory);
     }
 
-    public void Dispose() => _directory.Dispose();
+    public void Dispose()
+    {
+        // Writer before directory: it holds an open handle and commits on dispose.
+        _writerFactory.Dispose();
+        _directory.Dispose();
+    }
 
     private static JsonObject Doc(string id, string name, string[] tags, int[] sizes) => new()
     {

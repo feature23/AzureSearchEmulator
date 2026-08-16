@@ -61,14 +61,10 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
     /// </summary>
     public SearchIndexClient CreateSearchIndexClient()
     {
-        var handler = new HttpClientHandler();
-        // Allow untrusted certificates for testing. This is safe in test environments only, not for production use.
-        handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-
         var options = new SearchClientOptions
         {
-            Transport = new HttpClientTransport(handler),
-            Retry = { MaxRetries = 1 } // Reduce retries to speed up tests
+            Transport = new HttpClientTransport(CreateHandler()),
+            Retry = { MaxRetries = 3 }
         };
 
         return new SearchIndexClient(Endpoint, Credential, options);
@@ -79,18 +75,39 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
     /// </summary>
     public SearchClient CreateSearchClient(string indexName)
     {
-        var handler = new HttpClientHandler();
-        // Allow untrusted certificates for testing. This is safe in test environments only, not for production use.
-        handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
-
         var options = new SearchClientOptions
         {
-            Transport = new HttpClientTransport(handler),
-            Retry = { MaxRetries = 1 } // Reduce retries to speed up tests
+            Transport = new HttpClientTransport(CreateHandler()),
+            Retry = { MaxRetries = 3 }
         };
 
         return new SearchClient(Endpoint, indexName, Credential, options);
     }
+
+    /// <summary>
+    /// Creates a raw <see cref="HttpClient"/> pointed at the emulator, for tests that need
+    /// to send payloads the strongly-typed SDK will not construct — such as a batch item
+    /// missing its key field.
+    /// </summary>
+    public HttpClient CreateHttpClient() => new(CreateHandler()) { BaseAddress = Endpoint };
+
+    /// <summary>
+    /// Builds the shared HTTP handler for talking to the emulator container.
+    /// </summary>
+    /// <remarks>
+    /// MaxConnectionsPerServer is raised well above the default because the concurrency
+    /// tests deliberately fire hundreds of simultaneous requests at a single container.
+    /// At the default limit the surplus requests queue on the connection pool, time out
+    /// mid-TLS-handshake, and surface as "IOException: Received an unexpected EOF or
+    /// 0 bytes from the transport stream" — a client-side transport failure that looks
+    /// like a server fault but is not one.
+    /// </remarks>
+    private static HttpClientHandler CreateHandler() => new()
+    {
+        // Test environment only: the emulator serves a self-signed certificate.
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+        MaxConnectionsPerServer = 256
+    };
 
     /// <summary>
     /// Stops and disposes the emulator container.

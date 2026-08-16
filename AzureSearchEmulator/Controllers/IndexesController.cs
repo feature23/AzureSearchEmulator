@@ -12,7 +12,8 @@ public class IndexesController(
     JsonSerializerOptions jsonSerializerOptions,
     ISearchIndexRepository searchIndexRepository,
     ILuceneDirectoryFactory luceneDirectoryFactory,
-    ILuceneIndexReaderFactory luceneIndexReaderFactory)
+    ILuceneIndexReaderFactory luceneIndexReaderFactory,
+    ILuceneIndexWriterFactory luceneIndexWriterFactory)
     : ODataController
 {
     [HttpGet]
@@ -98,7 +99,10 @@ public class IndexesController(
 
         await searchIndexRepository.Update(index);
 
-        // Clear cached Lucene resources so schema changes take effect
+        // Clear cached Lucene resources so schema changes take effect. Writer first: it
+        // holds the directory's write.lock and was built with the OLD per-field analyzer,
+        // so it must be released before the reader and directory it depends on.
+        luceneIndexWriterFactory.ClearCachedWriter(index.Name);
         luceneIndexReaderFactory.ClearCachedReader(index.Name);
         luceneDirectoryFactory.ClearCachedDirectory(index.Name);
 
@@ -120,11 +124,16 @@ public class IndexesController(
             return NotFound();
         }
 
-        await searchIndexRepository.Delete(index);
-
-        // Clear cached Lucene resources
+        // Release Lucene resources BEFORE deleting from disk: the repository does a
+        // recursive Directory.Delete of the segment files, and a cached writer holds
+        // write.lock plus open handles on them. On Linux the unlink would silently
+        // succeed and leave the writer appending to orphaned inodes; on Windows it
+        // would throw. Order matters — writer, then reader, then directory.
+        luceneIndexWriterFactory.ClearCachedWriter(index.Name);
         luceneIndexReaderFactory.ClearCachedReader(index.Name);
         luceneDirectoryFactory.ClearCachedDirectory(index.Name);
+
+        await searchIndexRepository.Delete(index);
 
         return NoContent();
     }

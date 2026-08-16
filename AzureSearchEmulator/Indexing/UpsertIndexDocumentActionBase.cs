@@ -10,11 +10,24 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
 {
     public override IndexingResult PerformIndexingAsync(IndexingContext context)
     {
-        var keyTerm = GetKeyTerm(context.Key);
-        var fields = GetDocFields(context.Index);
+        // GetKeyTerm throws when the batch item omits the key field. It has to run inside
+        // the try: outside, the throw escapes IndexDocuments and 500s the whole batch,
+        // taking every other item's result with it — including the summary log that is
+        // supposed to be the record of which writes were dropped.
+        Term keyTerm;
 
         try
         {
+            keyTerm = GetKeyTerm(context.Key);
+        }
+        catch (Exception ex)
+        {
+            return new IndexingResult(string.Empty, $"{ex.GetType().Name}: {ex.Message}", false, 400);
+        }
+
+        try
+        {
+            var fields = GetDocFields(context.Index);
             IndexDocument(context, keyTerm, fields);
             return new IndexingResult(keyTerm.Text, true, 200);
         }
