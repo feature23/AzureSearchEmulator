@@ -46,7 +46,7 @@ public class DocumentIndexingController(
         // the process-wide console lock, which serialized concurrent indexing.
         if (logger.IsEnabled(LogLevel.Debug))
         {
-            logger.LogDebug("[INDEX {IndexKey}] body: {Body}", indexKey, Truncate(json));
+            logger.LogDebug("[INDEX {IndexKey}] body: {Body}", Sanitize(indexKey), SanitizeAndTruncate(json));
         }
 
         var batch = JsonSerializer.Deserialize<IndexDocumentsBatch>(json, jsonSerializerOptions);
@@ -94,19 +94,58 @@ public class DocumentIndexingController(
         if (failed.Count > 0)
         {
             logger.LogWarning("[INDEX {IndexKey}] {Succeeded}/{Total} ok — {Failures}",
-                indexKey, succeeded, actions.Count,
-                string.Join(", ", failed.Select(i => $"{i.Key}:{i.StatusCode} FAILED({i.ErrorMessage})")));
+                Sanitize(indexKey), succeeded, actions.Count,
+                string.Join(", ", failed.Select(i =>
+                    $"{Sanitize(i.Key)}:{i.StatusCode} FAILED({Sanitize(i.ErrorMessage)})")));
         }
         else if (logger.IsEnabled(LogLevel.Debug))
         {
-            logger.LogDebug("[INDEX {IndexKey}] {Succeeded}/{Total} ok", indexKey, succeeded, actions.Count);
+            logger.LogDebug("[INDEX {IndexKey}] {Succeeded}/{Total} ok", Sanitize(indexKey), succeeded, actions.Count);
         }
 
         return StatusCode(failed.Count > 0 ? 207 : 200, result);
     }
 
-    private static string Truncate(string value) =>
-        value.Length <= MaxLoggedBodyLength
-            ? value
-            : $"{value[..MaxLoggedBodyLength]}… [truncated, {value.Length} chars total]";
+    /// <summary>
+    /// Strips CR/LF and other control characters from a value before it reaches the log.
+    /// Every value logged here — the index key, the request body, per-item error messages —
+    /// is attacker-controlled, and an embedded newline lets a caller forge whole log lines.
+    /// </summary>
+    private static string Sanitize(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        return string.Create(value.Length, value, static (span, source) =>
+        {
+            for (var i = 0; i < source.Length; i++)
+            {
+                var c = source[i];
+                span[i] = char.IsControl(c) ? ' ' : c;
+            }
+        });
+    }
+
+    private static string SanitizeAndTruncate(string value)
+    {
+        var sanitized = Sanitize(value);
+
+        if (sanitized.Length <= MaxLoggedBodyLength)
+        {
+            return sanitized;
+        }
+
+        // Back off one char if the cut would land between a surrogate pair, so the log
+        // never carries a lone surrogate.
+        var cut = MaxLoggedBodyLength;
+
+        if (char.IsHighSurrogate(sanitized[cut - 1]))
+        {
+            cut--;
+        }
+
+        return $"{sanitized[..cut]}… [truncated, {sanitized.Length} chars total]";
+    }
 }
