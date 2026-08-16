@@ -4,6 +4,7 @@ using Azure.Core.Pipeline;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Indexes;
 using Azure.Search.Documents.Indexes.Models;
+using Azure.Core.GeoJson;
 using Azure.Search.Documents.Models;
 
 int port = 5123;
@@ -56,7 +57,8 @@ try
             new SearchField("description", SearchFieldDataType.String) { IsSearchable = true },
             new SearchField("price", SearchFieldDataType.Double) { IsFilterable = true, IsSortable = true },
             new SearchField("category", SearchFieldDataType.String) { IsFilterable = true },
-            new SearchField("inStock", SearchFieldDataType.Boolean) { IsFilterable = true }
+            new SearchField("inStock", SearchFieldDataType.Boolean) { IsFilterable = true },
+            new SearchField("location", SearchFieldDataType.GeographyPoint) { IsFilterable = true, IsSortable = true }
         ]
     };
 
@@ -86,11 +88,13 @@ try
     Console.WriteLine("3. Uploading documents...");
     try
     {
+        // Locations are Seattle, Bellevue (~10km away), and Portland (~234km away).
         var docs = new List<object>
         {
-            new { id = "1", name = "Laptop Pro 15", description = "High-performance laptop with 16GB RAM and 512GB SSD", price = 1299.99, category = "Electronics", inStock = true },
-            new { id = "2", name = "Laptop Budget 13", description = "Affordable laptop perfect for students and everyday use", price = 499.99, category = "Electronics", inStock = true },
-            new { id = "3", name = "Gaming Mouse", description = "Precision gaming mouse with 16000 DPI sensor", price = 59.99, category = "Accessories", inStock = true },
+            // GeoPoint takes longitude first, matching the GeoJSON wire format.
+            new { id = "1", name = "Laptop Pro 15", description = "High-performance laptop with 16GB RAM and 512GB SSD", price = 1299.99, category = "Electronics", inStock = true, location = new GeoPoint(-122.3321, 47.6062) },
+            new { id = "2", name = "Laptop Budget 13", description = "Affordable laptop perfect for students and everyday use", price = 499.99, category = "Electronics", inStock = true, location = new GeoPoint(-122.2015, 47.6101) },
+            new { id = "3", name = "Gaming Mouse", description = "Precision gaming mouse with 16000 DPI sensor", price = 59.99, category = "Accessories", inStock = true, location = new GeoPoint(-122.6784, 45.5152) },
         };
 
         var batch = IndexDocumentsBatch.Upload<object>(docs);
@@ -146,8 +150,63 @@ try
         Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
     }
 
-    // Test 7: Delete Index
-    Console.WriteLine("7. Deleting index...");
+    // Test 7: Geospatial filter and distance ordering
+    Console.WriteLine("7. Searching by distance...");
+    try
+    {
+        // Seattle; a 20km radius should include Seattle and Bellevue but not Portland.
+        const string origin = "geography'POINT(-122.3321 47.6062)'";
+
+        var geoOptions = new SearchOptions
+        {
+            Size = 10,
+            Filter = $"geo.distance(location, {origin}) le 20",
+            OrderBy = { $"geo.distance(location, {origin}) asc" }
+        };
+
+        var results = await searchClient.SearchAsync<object>("*", geoOptions);
+        var items = await results.Value.GetResultsAsync().ToListAsync();
+
+        Console.WriteLine($"   ✓ Found {items.Count} results within 20km, nearest first");
+        foreach (var item in items)
+        {
+            Console.WriteLine($"     - {System.Text.Json.JsonSerializer.Serialize(item.Document)}");
+        }
+        Console.WriteLine();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
+    }
+
+    // Test 8: Geospatial polygon intersection
+    Console.WriteLine("8. Searching within a polygon...");
+    try
+    {
+        var geoOptions = new SearchOptions
+        {
+            Size = 10,
+            // A counterclockwise box around the Seattle/Bellevue area.
+            Filter = "geo.intersects(location, geography'POLYGON((-122.5 47.5, -122.1 47.5, -122.1 47.7, -122.5 47.7, -122.5 47.5))')"
+        };
+
+        var results = await searchClient.SearchAsync<object>("*", geoOptions);
+        var items = await results.Value.GetResultsAsync().ToListAsync();
+
+        Console.WriteLine($"   ✓ Found {items.Count} results within the polygon");
+        foreach (var item in items)
+        {
+            Console.WriteLine($"     - {System.Text.Json.JsonSerializer.Serialize(item.Document)}");
+        }
+        Console.WriteLine();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
+    }
+
+    // Test 9: Delete Index
+    Console.WriteLine("9. Deleting index...");
     try
     {
         await indexClient.DeleteIndexAsync(indexName);

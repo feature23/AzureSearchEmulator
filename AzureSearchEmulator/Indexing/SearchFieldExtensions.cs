@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
+using AzureSearchEmulator.Searching;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 
@@ -25,6 +26,14 @@ public static class SearchFieldExtensions
         {
             var str = value.GetValue<string>();
             return CreateStringFields(field, str, stored);
+        }
+
+        if (field.Type == GeoSupport.GeographyPointType)
+        {
+            // A geography point needs more than one Lucene field, so it can't go through
+            // CreateScalarField's single-field contract.
+            var (lon, lat) = GeoSupport.ParseGeoJsonPoint(field.Name, value);
+            return GeoSupport.CreateFields(field.Name, lon, lat, field.Retrievable);
         }
 
         return [CreateScalarField(field, field.Type, value, stored)];
@@ -59,6 +68,16 @@ public static class SearchFieldExtensions
             if (elementType == "Edm.String")
             {
                 fields.AddRange(CreateStringFields(field, element.GetValue<string>(), stored));
+            }
+            else if (elementType == GeoSupport.GeographyPointType)
+            {
+                // Storing each point under the same field names would index fine, but the
+                // geo filters read values back through the field cache, which exposes only
+                // one value per document. Rather than silently matching against an
+                // arbitrary point, this is rejected until multi-valued points are read
+                // through doc values.
+                throw new NotImplementedException(
+                    $"Field '{field.Name}': {field.Type} is not yet supported.");
             }
             else
             {
@@ -104,7 +123,8 @@ public static class SearchFieldExtensions
             "Edm.Double" => new DoubleField(field.Name, value.GetValue<double>(), stored),
             "Edm.Boolean" => new Int32Field(field.Name, value.GetValue<bool>() ? 1 : 0, stored),
             "Edm.DateTimeOffset" => new Int64Field(field.Name, value.GetValue<DateTimeOffset>().ToUnixTimeMilliseconds(), stored),
-            "Edm.GeographyPoint" => throw new NotImplementedException(),
+            // Edm.GeographyPoint is handled by the callers above, which can emit the
+            // multiple Lucene fields a point requires.
             "Edm.ComplexType" => throw new NotImplementedException(),
             _ => throw new InvalidOperationException($"Unsupported field type {type}")
         };

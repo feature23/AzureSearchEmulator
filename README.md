@@ -45,8 +45,11 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `$count` - include a count of document matches
   * `$skip` - paging; skip X records, defaults to 0
   * `$top` - paging; take next X records, defaults to 50
-  * `$filter` - OData filter expression to limit results, i.e. `(Type eq 'Comment') or (Type eq 'File')`
-  * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`
+  * `$filter` - OData filter expression to limit results, i.e. `(Type eq 'Comment') or (Type eq 'File')`,
+    including the geospatial functions `geo.distance` and `geo.intersects`, i.e.
+    `geo.distance(Location, geography'POINT(-122.131577 47.678581)') le 10`
+  * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`, including
+    sorting by distance, i.e. `geo.distance(Location, geography'POINT(-122.131577 47.678581)') asc`
   * `highlight` - Comma-delimited list of fields to highlight, supports optional max highlight count i.e. `Body-10,Title-5`
   * `highlightPreTag` - Start tag to wrap highlighted result text, defaults to `<em>`
   * `highlightPostTag` - End tag to wrap highlighted result text, defaults to `</em>`
@@ -56,6 +59,16 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
+
+### Geospatial support
+
+Fields of type `Edm.GeographyPoint` can be indexed, filtered, sorted, and retrieved.
+As in Azure Search, document values use the GeoJSON `Point` format
+(`{ "type": "Point", "coordinates": [longitude, latitude] }`), while filter and `$orderby`
+expressions use WKT literals (`geography'POINT(longitude latitude)'`), and `geo.distance`
+returns kilometers. Note that both forms list *longitude before latitude*.
+
+`Collection(Edm.GeographyPoint)` is not yet supported and is rejected at indexing time.
 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.
