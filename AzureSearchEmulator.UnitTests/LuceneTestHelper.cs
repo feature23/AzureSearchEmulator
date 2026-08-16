@@ -1,5 +1,6 @@
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
+using AzureSearchEmulator.Searching;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
@@ -79,6 +80,70 @@ public sealed class LuceneTestHelper : IDisposable
             CreateProductDoc("4", "Mechanical Keyboard", "Mechanical keyboard with Cherry MX switches and RGB lighting", 149.99, "Accessories", false, 5),
             CreateProductDoc("5", "Monitor 4K", "27-inch 4K monitor with 60Hz refresh rate", 599.99, "Electronics", true, 3),
         ];
+    }
+
+    /// <summary>
+    /// Creates an index with a geography point field, used by the geospatial tests.
+    /// </summary>
+    public static SearchIndex CreateCityIndex()
+    {
+        return new SearchIndex
+        {
+            Name = "cities",
+            Fields =
+            [
+                new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = true },
+                new SearchField { Name = "Name", Type = "Edm.String", Searchable = true },
+                new SearchField { Name = "Location", Type = "Edm.GeographyPoint", Searchable = false, Filterable = true, Sortable = true },
+                new SearchField { Name = "Population", Type = "Edm.Int32", Searchable = false, Filterable = true, Sortable = true },
+            ]
+        };
+    }
+
+    /// <summary>
+    /// Cities with real coordinates, so the expected distances in the geospatial tests can
+    /// be checked against known real-world values.
+    /// </summary>
+    public static List<Document> CreateCityDocuments()
+    {
+        return
+        [
+            // Longitude first, matching the GeoJSON and WKT convention.
+            CreateCityDoc("1", "Seattle", -122.3321, 47.6062, 737015),
+            CreateCityDoc("2", "Bellevue", -122.2015, 47.6101, 148164),
+            CreateCityDoc("3", "Tacoma", -122.4443, 47.2529, 219346),
+            CreateCityDoc("4", "Portland", -122.6784, 45.5152, 652503),
+            CreateCityDoc("5", "New York", -74.0060, 40.7128, 8336817),
+            // A city with no location at all, to cover the null-handling rules.
+            CreateCityDocWithoutLocation("6", "Nowhere", 1000),
+        ];
+    }
+
+    private static Document CreateCityDoc(string id, string name, double lon, double lat, int population)
+    {
+        var doc = new Document
+        {
+            new StringField("Id", id, Field.Store.YES),
+            new TextField("Name", name, Field.Store.YES),
+            new Int32Field("Population", population, Field.Store.YES),
+        };
+
+        foreach (var field in GeoSupport.CreateFields("Location", lon, lat, retrievable: true))
+        {
+            doc.Add(field);
+        }
+
+        return doc;
+    }
+
+    private static Document CreateCityDocWithoutLocation(string id, string name, int population)
+    {
+        return new Document
+        {
+            new StringField("Id", id, Field.Store.YES),
+            new TextField("Name", name, Field.Store.YES),
+            new Int32Field("Population", population, Field.Store.YES),
+        };
     }
 
     private static Document CreateProductDoc(string id, string name, string description, double price, string category, bool inStock, int rating)

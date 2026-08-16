@@ -7,6 +7,7 @@ using Lucene.Net.QueryParsers.Simple;
 using Lucene.Net.Search;
 using Microsoft.OData.UriParser;
 using Microsoft.OData.UriParser.Aggregation;
+using Microsoft.Spatial;
 using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryConfigHandler.Operator;
 
 namespace AzureSearchEmulator.Searching;
@@ -137,6 +138,13 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
                     new BooleanClause(right, occur),
                 }
             };
+        }
+
+        // geo.distance(...) is only meaningful when compared to a distance, so it is matched
+        // here as part of the comparison rather than in Visit(FunctionCallToken).
+        if (TryVisitGeoDistanceComparison(tokenIn, out var geoDistanceQuery))
+        {
+            return geoDistanceQuery;
         }
 
         if (TryResolveComparisonPath(tokenIn.Left, out var path)
@@ -368,6 +376,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             "search.in" => VisitSearchIn(tokenIn),
             "search.ismatch" => VisitSearchIsMatch(tokenIn),
             "search.ismatchscoring" => VisitSearchIsMatchScoring(tokenIn),
+            "geo.intersects" => VisitGeoIntersects(tokenIn),
+            "geo.distance" => throw new InvalidOperationException(
+                "geo.distance must be compared to a distance in kilometers using lt, le, gt, or ge."),
             _ => throw new NotImplementedException($"Function {tokenIn.Name} not implemented")
         };
     }
@@ -413,6 +424,195 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         }
 
         return query;
+    }
+
+    /// <summary>
+    /// Handles <c>geo.distance(field, geography'POINT(lon lat)') le 10</c> and its variants.
+    /// </summary>
+    private bool TryVisitGeoDistanceComparison(BinaryOperatorToken tokenIn, out Query query)
+    {
+        query = null!;
+
+        // The function may sit on either side of the comparison; if it's on the right,
+        // the operator has to be flipped along with it ("10 ge geo.distance(...)").
+        var (functionToken, distanceToken, operatorKind) = tokenIn switch
+        {
+            { Left: FunctionCallToken { Name: "geo.distance" } fn, Right: LiteralToken lit } =>
+                (fn, lit, tokenIn.OperatorKind),
+            { Right: FunctionCallToken { Name: "geo.distance" } fn, Left: LiteralToken lit } =>
+                (fn, lit, FlipComparison(tokenIn.OperatorKind)),
+            _ => (null, null, tokenIn.OperatorKind)
+        };
+
+        if (functionToken is null || distanceToken is null)
+        {
+            return false;
+        }
+
+        var (path, origin) = ParseGeoFunctionArguments(functionToken, "geo.distance");
+
+        EnsureFilterable(path);
+        EnsureGeographyPoint(path, "geo.distance");
+
+        if (!TryGetDouble(distanceToken.Value, out var distanceKm))
+        {
+            throw new InvalidOperationException("geo.distance must be compared to a numeric distance in kilometers.");
+        }
+
+        var (withinDistance, inclusive) = operatorKind switch
+        {
+            BinaryOperatorKind.LessThan => (true, false),
+            BinaryOperatorKind.LessThanOrEqual => (true, true),
+            BinaryOperatorKind.GreaterThan => (false, false),
+            BinaryOperatorKind.GreaterThanOrEqual => (false, true),
+            // Azure Search rejects eq/ne against a distance, since exact floating point
+            // equality on a computed distance is not meaningful.
+            _ => throw new InvalidOperationException(
+                $"Operator {operatorKind} is not supported for geo.distance; use lt, le, gt, or ge.")
+        };
+
+        query = new GeoDistanceQuery(path, origin.Lon, origin.Lat, distanceKm, withinDistance, inclusive);
+
+        return true;
+    }
+
+    private Query VisitGeoIntersects(FunctionCallToken tokenIn)
+    {
+        var args = tokenIn.Arguments.ToList();
+
+        if (args.Count != 2)
+        {
+            throw new ArgumentException("geo.intersects requires two arguments");
+        }
+
+        if (!TryResolveComparisonPath(args[0].ValueToken, out var path))
+        {
+            throw new InvalidOperationException("The first argument to geo.intersects must be a field path.");
+        }
+
+        if (args[1].ValueToken is not LiteralToken polygonLiteral)
+        {
+            throw new InvalidOperationException("The second argument to geo.intersects must be a polygon literal.");
+        }
+
+        EnsureFilterable(path);
+        EnsureGeographyPoint(path, "geo.intersects");
+
+        var ring = GetRingFromLiteral(polygonLiteral);
+
+        return new GeoIntersectsQuery(path, ring);
+    }
+
+    /// <summary>
+    /// Resolves the (field path, point) argument pair shared by the geo functions. Azure
+    /// Search allows the field and the constant in either order.
+    /// </summary>
+    private (string Path, (double Lon, double Lat) Point) ParseGeoFunctionArguments(
+        FunctionCallToken tokenIn,
+        string functionName)
+    {
+        var args = tokenIn.Arguments.ToList();
+
+        if (args.Count != 2)
+        {
+            throw new ArgumentException($"{functionName} requires two arguments");
+        }
+
+        if (TryResolveComparisonPath(args[0].ValueToken, out var path)
+            && args[1].ValueToken is LiteralToken pointLiteral)
+        {
+            return (path, GetPointFromLiteral(pointLiteral));
+        }
+
+        if (TryResolveComparisonPath(args[1].ValueToken, out path)
+            && args[0].ValueToken is LiteralToken reversedLiteral)
+        {
+            return (path, GetPointFromLiteral(reversedLiteral));
+        }
+
+        throw new InvalidOperationException(
+            $"{functionName} requires one field path argument and one geography point constant.");
+    }
+
+    /// <summary>
+    /// Reads a <c>geography'POINT(lon lat)'</c> literal.
+    /// </summary>
+    /// <remarks>
+    /// The OData parser resolves geography literals into Microsoft.Spatial shapes before we
+    /// see them, so the coordinates are read from the parsed value rather than by
+    /// re-parsing the WKT text.
+    /// </remarks>
+    private static (double Lon, double Lat) GetPointFromLiteral(LiteralToken literal)
+    {
+        if (literal.Value is not GeographyPoint point)
+        {
+            throw new InvalidOperationException(
+                "Expected a geography point constant, i.e. geography'POINT(longitude latitude)'.");
+        }
+
+        return (point.Longitude, point.Latitude);
+    }
+
+    /// <summary>
+    /// Reads the bounding ring of a <c>geography'POLYGON((...))'</c> literal.
+    /// </summary>
+    private static IReadOnlyList<(double Lon, double Lat)> GetRingFromLiteral(LiteralToken literal)
+    {
+        if (literal.Value is not GeographyPolygon polygon)
+        {
+            throw new InvalidOperationException(
+                "Expected a geography polygon constant, i.e. geography'POLYGON((lon lat, ...))'.");
+        }
+
+        if (polygon.Rings.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"geo.intersects requires a polygon with exactly one bounding ring, but got {polygon.Rings.Count}.");
+        }
+
+        var ring = polygon.Rings[0].Points.Select(i => (i.Longitude, i.Latitude)).ToList();
+
+        return GeoSupport.ValidateRing(ring);
+    }
+
+    private static BinaryOperatorKind FlipComparison(BinaryOperatorKind kind) => kind switch
+    {
+        BinaryOperatorKind.LessThan => BinaryOperatorKind.GreaterThan,
+        BinaryOperatorKind.LessThanOrEqual => BinaryOperatorKind.GreaterThanOrEqual,
+        BinaryOperatorKind.GreaterThan => BinaryOperatorKind.LessThan,
+        BinaryOperatorKind.GreaterThanOrEqual => BinaryOperatorKind.LessThanOrEqual,
+        _ => kind
+    };
+
+    private static bool TryGetDouble(object? value, out double result)
+    {
+        switch (value)
+        {
+            case double d: result = d; return true;
+            case int i: result = i; return true;
+            case long l: result = l; return true;
+            case float f: result = f; return true;
+            case decimal m: result = (double)m; return true;
+            default: result = 0; return false;
+        }
+    }
+
+    private void EnsureGeographyPoint(string path, string functionName)
+    {
+        if (_index is null) return;
+
+        var field = _index.Fields.FirstOrDefault(f => string.Equals(f.Name, path, StringComparison.OrdinalIgnoreCase));
+
+        if (field is null) return;
+
+        if (field.Type != GeoSupport.GeographyPointType)
+        {
+            // Collection(Edm.GeographyPoint) lands here too: the geo filters read a single
+            // point per document from the field cache, so a collection cannot be evaluated
+            // correctly and is reported rather than quietly matching nothing.
+            throw new InvalidOperationException(
+                $"Field '{field.Name}' is of type {field.Type}; {functionName} requires a {GeoSupport.GeographyPointType} field.");
+        }
     }
 
     public Query Visit(LambdaToken tokenIn)

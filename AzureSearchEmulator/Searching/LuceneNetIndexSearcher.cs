@@ -9,6 +9,7 @@ using Lucene.Net.QueryParsers.Flexible.Standard;
 using Lucene.Net.QueryParsers.Simple;
 using Lucene.Net.Search;
 using Microsoft.OData.UriParser;
+using Microsoft.Spatial;
 using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryConfigHandler.Operator;
 
 namespace AzureSearchEmulator.Searching;
@@ -146,7 +147,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         // NOTE: the ASP.NET OData stuff for parsing $orderby is unfortunately internal.
         // TODO: Replace this with a better parser, maybe with ANTLR?
-        var parts = request.Orderby.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = SplitOrderByClauses(request.Orderby);
 
         if (parts.Length == 0)
         {
@@ -168,8 +169,52 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         return new Sort(fields);
     }
 
+    /// <summary>
+    /// Splits an $orderby expression on its top-level commas.
+    /// </summary>
+    /// <remarks>
+    /// A plain <c>Split(',')</c> would tear apart a clause like
+    /// <c>geo.distance(Location, geography'POINT(-122 47)') asc</c>, whose arguments contain
+    /// commas of their own, so commas inside parentheses are skipped over here.
+    /// </remarks>
+    private static string[] SplitOrderByClauses(string orderby)
+    {
+        var clauses = new List<string>();
+        var depth = 0;
+        var start = 0;
+
+        for (var i = 0; i < orderby.Length; i++)
+        {
+            switch (orderby[i])
+            {
+                case '(':
+                    depth++;
+                    break;
+                case ')':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    clauses.Add(orderby[start..i]);
+                    start = i + 1;
+                    break;
+            }
+        }
+
+        clauses.Add(orderby[start..]);
+
+        return clauses
+            .Select(i => i.Trim())
+            .Where(i => !string.IsNullOrEmpty(i))
+            .ToArray();
+    }
+
     private static SortField GetSortField(SearchIndex index, string sort)
     {
+        if (sort.StartsWith("geo.distance", StringComparison.OrdinalIgnoreCase))
+        {
+            return GetGeoDistanceSortField(index, sort);
+        }
+
         var sortParts = sort.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         if (sortParts.Length is 0 or > 2)
@@ -180,7 +225,6 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         bool descending = sortParts.Length == 2 && sortParts[1].Equals("desc", StringComparison.OrdinalIgnoreCase);
 
-        // TODO: support geospatial distance sorting
         string fieldName = sortParts[0];
 
         var field = index.Fields.FirstOrDefault(i => i.Name.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
@@ -191,6 +235,87 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         }
 
         return new SortField(field.Name, GetSortFieldType(field), descending);
+    }
+
+    /// <summary>
+    /// Builds the sort for a <c>geo.distance(field, geography'POINT(lon lat)') asc|desc</c>
+    /// order-by clause.
+    /// </summary>
+    private static SortField GetGeoDistanceSortField(SearchIndex index, string sort)
+    {
+        // The direction is the trailing token, and the rest is a function call the OData
+        // parser can read for us, so we don't have to parse the WKT literal by hand.
+        var descending = false;
+        var expression = sort;
+
+        var lastSpace = sort.LastIndexOf(' ');
+
+        if (lastSpace > 0)
+        {
+            var direction = sort[(lastSpace + 1)..].Trim();
+
+            if (direction.Equals("desc", StringComparison.OrdinalIgnoreCase)
+                || direction.Equals("asc", StringComparison.OrdinalIgnoreCase))
+            {
+                descending = direction.Equals("desc", StringComparison.OrdinalIgnoreCase);
+                expression = sort[..lastSpace];
+            }
+        }
+
+        var parser = new UriQueryExpressionParser(100);
+
+        // ParseFilter expects a boolean expression, so the distance is compared against a
+        // throwaway constant purely to give the parser something well-formed to chew on.
+        if (parser.ParseFilter($"{expression} le 0") is not BinaryOperatorToken
+            {
+                Left: FunctionCallToken { Name: "geo.distance" } functionToken
+            })
+        {
+            throw new InvalidOperationException($"Unable to parse $orderby expression '{sort}'.");
+        }
+
+        var args = functionToken.Arguments.ToList();
+
+        if (args.Count != 2)
+        {
+            throw new InvalidOperationException("geo.distance requires two arguments");
+        }
+
+        var pathToken = args.Select(i => i.ValueToken).OfType<EndPathToken>().FirstOrDefault();
+        var pointLiteral = args.Select(i => i.ValueToken).OfType<LiteralToken>().FirstOrDefault();
+
+        if (pathToken is null || pointLiteral?.Value is not GeographyPoint origin)
+        {
+            throw new InvalidOperationException(
+                "geo.distance requires one field path argument and one geography point constant.");
+        }
+
+        var field = index.Fields.FirstOrDefault(i =>
+            i.Name.Equals(pathToken.Identifier, StringComparison.OrdinalIgnoreCase));
+
+        if (field == null)
+        {
+            throw new InvalidOperationException(
+                $"Unable to find field '{pathToken.Identifier}' in the index '{index.Name}'");
+        }
+
+        if (field.Type != GeoSupport.GeographyPointType)
+        {
+            // Collection(Edm.GeographyPoint) is excluded here as well: Azure Search cannot
+            // sort on a collection field, since there is no single distance to sort by.
+            throw new InvalidOperationException(
+                $"Field '{field.Name}' is of type {field.Type}; sorting by geo.distance requires a {GeoSupport.GeographyPointType} field.");
+        }
+
+        if (!field.Sortable.GetValueOrDefault())
+        {
+            throw new InvalidOperationException($"Field '{field.Name}' is not sortable.");
+        }
+
+        return new SortField(
+            field.Name,
+            new GeoDistanceComparatorSource(field.Name, origin.Longitude, origin.Latitude),
+            descending);
     }
 
     private static SortFieldType GetSortFieldType(SearchField field)
@@ -337,6 +462,22 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 continue;
             }
 
+            if (field.Type == GeoSupport.GeographyPointType)
+            {
+                // Points are stored as a separate lat/lon pair rather than under the
+                // field's own name, so they need their own lookup.
+                var latField = doc.GetField(GeoSupport.GetLatFieldName(field.Name));
+                var lonField = doc.GetField(GeoSupport.GetLonFieldName(field.Name));
+
+                if (latField?.GetDoubleValue() is double storedLat
+                    && lonField?.GetDoubleValue() is double storedLon)
+                {
+                    result[field.Name] = GeoSupport.CreateGeoJsonPoint(storedLon, storedLat);
+                }
+
+                continue;
+            }
+
             var docField = doc.GetField(field.Name);
 
             if (docField != null)
@@ -349,7 +490,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                     "Edm.Double" => docField.GetDoubleValue(),
                     "Edm.Boolean" => docField.GetInt32Value() is int i ? i != 0 : null,
                     "Edm.DateTimeOffset" => docField.GetInt64Value() is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null,
-                    "Edm.GeographyPoint" => throw new NotImplementedException(),
+                    // Edm.GeographyPoint is handled above, before this switch.
                     "Edm.ComplexType" => throw new NotImplementedException(),
                     _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
                 };
