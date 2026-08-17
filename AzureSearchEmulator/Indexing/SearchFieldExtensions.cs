@@ -44,7 +44,8 @@ public static class SearchFieldExtensions
         if (field.Type == "Edm.String")
         {
             var str = value.GetValue<string>();
-            return CreateStringFields(field, str, stored, path);
+            return CreateStringFields(field, str, stored, path)
+                .Concat(CreateFacetFields(field, field.Type, value, path));
         }
 
         if (field.Type == GeoSupport.GeographyPointType)
@@ -55,7 +56,8 @@ public static class SearchFieldExtensions
             return GeoSupport.CreateFields(path, lon, lat, field.Retrievable);
         }
 
-        return [CreateScalarField(field.Type, value, stored, path)];
+        return new[] { CreateScalarField(field.Type, value, stored, path) }
+            .Concat(CreateFacetFields(field, field.Type, value, path));
     }
 
     /// <summary>
@@ -187,6 +189,7 @@ public static class SearchFieldExtensions
             if (elementType == "Edm.String")
             {
                 fields.AddRange(CreateStringFields(field, element.GetValue<string>(), stored, path));
+                fields.AddRange(CreateFacetFields(field, elementType, element, path));
             }
             else if (elementType == GeoSupport.GeographyPointType)
             {
@@ -198,6 +201,7 @@ public static class SearchFieldExtensions
             else
             {
                 fields.Add(CreateScalarField(elementType, element, stored, path));
+                fields.AddRange(CreateFacetFields(field, elementType, element, path));
             }
         }
 
@@ -244,6 +248,43 @@ public static class SearchFieldExtensions
             // CreateComplexFields, which flattens it into its leaves.
             _ => throw new InvalidOperationException($"Unsupported field type {type}")
         };
+    }
+
+    /// <summary>
+    /// Builds the facet doc values for one value of a facetable field, converting the JSON
+    /// value to the CLR value <see cref="FacetSupport"/> encodes.
+    /// </summary>
+    /// <remarks>
+    /// This runs alongside the indexed and stored copies rather than replacing any of them:
+    /// see <see cref="FacetSupport"/> for why facet counting needs values of its own.
+    /// </remarks>
+    private static IEnumerable<IIndexableField> CreateFacetFields(
+        SearchField field,
+        string type,
+        JsonNode value,
+        string path)
+    {
+        if (!field.Facetable.GetValueOrDefault())
+        {
+            return [];
+        }
+
+        object? facetValue = type switch
+        {
+            "Edm.String" => value.GetValue<string>(),
+            "Edm.Int32" => value.GetValue<int>(),
+            "Edm.Int64" => value.GetValue<long>(),
+            "Edm.Double" => value.GetValue<double>(),
+            "Edm.Boolean" => value.GetValue<bool>(),
+            "Edm.DateTimeOffset" => value.GetValue<DateTimeOffset>(),
+            // Geography and complex fields are not facetable; FacetRequest rejects a request
+            // to facet on one, so nothing needs to be written here.
+            _ => null,
+        };
+
+        return facetValue is null
+            ? []
+            : FacetSupport.CreateFacetFields(field, type, path, facetValue);
     }
 
     public static string GetCollectionElementType(string fieldType)

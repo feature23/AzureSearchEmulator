@@ -142,8 +142,60 @@ public class DocumentSearchingController(
             oDataResponse["@odata.count"] = JsonValue.Create(response.Count);
         }
 
+        if (response.Facets != null)
+        {
+            oDataResponse["@search.facets"] = BuildFacets(response.Facets);
+        }
+
         oDataResponse["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray());
 
         return Ok(oDataResponse);
+    }
+
+    /// <summary>
+    /// Renders the counted facets as the <c>@search.facets</c> object.
+    /// </summary>
+    /// <remarks>
+    /// A range bucket carries only the bounds it actually has: Azure Search omits <c>from</c>
+    /// on the first bucket and <c>to</c> on the last rather than sending them as null, and
+    /// the SDK relies on that to tell an open-ended bucket from a bounded one.
+    /// </remarks>
+    private static JsonObject BuildFacets(
+        IReadOnlyDictionary<string, IReadOnlyList<FacetBucket>> facets)
+    {
+        var result = new JsonObject();
+
+        foreach (var (name, buckets) in facets)
+        {
+            var array = new JsonArray();
+
+            foreach (var bucket in buckets)
+            {
+                var item = new JsonObject();
+
+                if (bucket.From != null)
+                {
+                    item["from"] = JsonValue.Create(bucket.From);
+                }
+
+                if (bucket.To != null)
+                {
+                    item["to"] = JsonValue.Create(bucket.To);
+                }
+
+                if (bucket.Value != null)
+                {
+                    item["value"] = JsonValue.Create(bucket.Value);
+                }
+
+                item["count"] = JsonValue.Create(bucket.Count);
+
+                array.Add(item);
+            }
+
+            result[name] = array;
+        }
+
+        return result;
     }
 }

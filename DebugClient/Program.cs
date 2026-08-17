@@ -55,8 +55,8 @@ try
             new SearchField("id", SearchFieldDataType.String) { IsKey = true },
             new SearchField("name", SearchFieldDataType.String) { IsSearchable = true },
             new SearchField("description", SearchFieldDataType.String) { IsSearchable = true },
-            new SearchField("price", SearchFieldDataType.Double) { IsFilterable = true, IsSortable = true },
-            new SearchField("category", SearchFieldDataType.String) { IsFilterable = true },
+            new SearchField("price", SearchFieldDataType.Double) { IsFilterable = true, IsSortable = true, IsFacetable = true },
+            new SearchField("category", SearchFieldDataType.String) { IsFilterable = true, IsFacetable = true },
             new SearchField("inStock", SearchFieldDataType.Boolean) { IsFilterable = true },
             new SearchField("location", SearchFieldDataType.GeographyPoint) { IsFilterable = true, IsSortable = true }
         ]
@@ -205,8 +205,45 @@ try
         Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
     }
 
-    // Test 9: Delete Index
-    Console.WriteLine("9. Deleting index...");
+    // Test 9: Faceted navigation
+    Console.WriteLine("9. Faceting...");
+    try
+    {
+        var facetOptions = new SearchOptions
+        {
+            // Size 0 asks for just the facet structure, which is how a search page builds
+            // its navigation without also paging through documents.
+            Size = 0,
+            IncludeTotalCount = true,
+            Facets = { "category", "price,values:100|1000" }
+        };
+
+        var results = await searchClient.SearchAsync<object>("*", facetOptions);
+
+        Console.WriteLine($"   ✓ Faceted {results.Value.TotalCount} documents");
+
+        foreach (var (name, buckets) in results.Value.Facets)
+        {
+            Console.WriteLine($"     {name}:");
+            foreach (var bucket in buckets)
+            {
+                // A value facet names its bucket; a range facet bounds it, leaving the
+                // outermost bounds null because they are open-ended.
+                var label = bucket.Value?.ToString()
+                            ?? $"[{bucket.From?.ToString() ?? "*"}, {bucket.To?.ToString() ?? "*"})";
+
+                Console.WriteLine($"       - {label}: {bucket.Count}");
+            }
+        }
+        Console.WriteLine();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
+    }
+
+    // Test 10: Delete Index
+    Console.WriteLine("10. Deleting index...");
     try
     {
         await indexClient.DeleteIndexAsync(indexName);

@@ -51,6 +51,9 @@ Currently, there is support (to varying degrees) for the following Azure Search 
     sub-field paths, i.e. `Address/City eq 'Seattle'`
   * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`, including
     sorting by distance, i.e. `geo.distance(Location, geography'POINT(-122.131577 47.678581)') asc`
+  * `facet` - Field to compute facet buckets over, repeatable, with optional
+    `count`/`sort`/`values`/`interval`/`timeoffset` options, i.e. `facet=Category,count:5`
+    (see Faceted search below)
   * `highlight` - Comma-delimited list of fields to highlight, supports optional max highlight count i.e. `Body-10,Title-5`
   * `highlightPreTag` - Start tag to wrap highlighted result text, defaults to `<em>`
   * `highlightPostTag` - End tag to wrap highlighted result text, defaults to `</em>`
@@ -60,6 +63,50 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
+
+### Faceted search
+
+Fields marked `facetable` can be used for faceted navigation. Facets are requested per query
+and returned under `@search.facets`, alongside the results:
+
+```
+facet=Category
+facet=Tags,count:5
+facet=Rating,sort:-value
+```
+
+Each facet expression is a field path followed by comma-separated options. `count` caps the
+number of buckets (default 10; `count:0` means no limit) and `sort` orders them (`count`,
+`-count`, `value`, or `-value`, defaulting to descending by count with ties broken by value).
+
+`values` and `interval` turn a numeric or `Edm.DateTimeOffset` facet into ranges instead, with
+the bucket bounds reported as `from`/`to`:
+
+```
+facet=BaseRate,values:80|150|220        # four buckets, the outermost open-ended
+facet=BaseRate,interval:100             # buckets of width 100
+facet=LastRenovationDate,interval:year  # one bucket per year
+facet=LastRenovationDate,interval:day,timeoffset:-01:00
+```
+
+As in Azure Search, `count`/`sort` cannot be combined with `values`/`interval`, `values` and
+`interval` cannot be combined with each other, and `timeoffset` only applies to `interval` on a
+date field.
+
+Facets are computed over the whole set of matching documents, not just the page being
+returned, so `$top` and `$skip` do not change the counts — but `$filter` does, since it changes
+what matches. Setting `$top=0` returns the facet structure with no documents, which is the
+usual way to populate a navigation panel.
+
+Counts are of *documents*: a hotel with two deluxe rooms counts once toward `Deluxe`, and a
+hotel with two rooms in one price band counts once in that bucket. A document does appear in
+every bucket it belongs to, so buckets of a `Collection(Edm.String)` field — or of a sub-field
+of a `Collection(Edm.ComplexType)` — can sum to more than the number of matching documents.
+
+Sub-fields of complex types are faceted by path, i.e. `facet=Address/City` or
+`facet=Rooms/BaseRate`. Matching Azure Search, `Edm.GeographyPoint` fields and complex fields
+themselves cannot be faceted, and faceting on a field that is not `facetable` is an error
+rather than being silently ignored.
 
 ### Geospatial support
 
