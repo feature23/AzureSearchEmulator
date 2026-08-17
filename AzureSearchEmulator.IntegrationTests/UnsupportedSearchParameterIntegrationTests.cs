@@ -54,51 +54,68 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
+    /// <summary>
+    /// A sticky session cannot change the response when there is one replica, so it is
+    /// answered rather than refused.
+    /// </summary>
     [Fact]
-    public async Task SessionId_IsRefused()
+    public async Task SessionId_IsAnswered()
     {
         const string indexName = "test-unsupported-session-id";
         var (indexClient, searchClient) = await SetUpAsync(indexName);
 
         var options = new SearchOptions { SessionId = "session-1" };
 
-        var ex = await AssertRefusedAsync(searchClient, options);
-        Assert.Contains("sessionId", ex.Message);
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
-    [Fact]
-    public async Task MinimumCoverage_BelowFull_IsRefused()
-    {
-        const string indexName = "test-unsupported-minimum-coverage";
-        var (indexClient, searchClient) = await SetUpAsync(indexName);
-
-        var options = new SearchOptions { MinimumCoverage = 75 };
-
-        var ex = await AssertRefusedAsync(searchClient, options);
-        Assert.Contains("minimumCoverage", ex.Message);
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>
-    /// A single local index is always fully covered, so the Azure default of 100 is genuinely
-    /// met rather than ignored, and the search must still run.
-    /// </summary>
-    [Fact]
-    public async Task MinimumCoverage_OfFull_IsAnswered()
-    {
-        const string indexName = "test-unsupported-coverage-full";
-        var (indexClient, searchClient) = await SetUpAsync(indexName);
-
-        var options = new SearchOptions { MinimumCoverage = 100 };
-
         var response = await searchClient.SearchAsync<SearchDocument>(
             "*", options, TestContext.Current.CancellationToken);
 
         var results = await response.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
         Assert.Equal(2, results.Count);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// A single local index is always fully covered, so any floor the caller sets is genuinely
+    /// met, and the coverage actually achieved is reported back.
+    /// </summary>
+    [Theory]
+    [InlineData(100.0)]
+    [InlineData(75.0)]
+    public async Task MinimumCoverage_IsAnsweredAndCoverageReported(double minimumCoverage)
+    {
+        const string indexName = "test-unsupported-minimum-coverage";
+        var (indexClient, searchClient) = await SetUpAsync(indexName);
+
+        var options = new SearchOptions { MinimumCoverage = minimumCoverage };
+
+        var response = await searchClient.SearchAsync<SearchDocument>(
+            "*", options, TestContext.Current.CancellationToken);
+
+        // Read through the SDK's own Coverage property, so this fails if the emulator emits
+        // the value under a name or shape the SDK cannot parse.
+        Assert.Equal(100.0, response.Value.Coverage);
+
+        var results = await response.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, results.Count);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Azure omits <c>@search.coverage</c> unless the request asked for it, and the SDK
+    /// surfaces that absence as a null. A caller's null check has to be reachable locally.
+    /// </summary>
+    [Fact]
+    public async Task WithoutMinimumCoverage_CoverageIsNotReported()
+    {
+        const string indexName = "test-unsupported-coverage-absent";
+        var (indexClient, searchClient) = await SetUpAsync(indexName);
+
+        var response = await searchClient.SearchAsync<SearchDocument>(
+            "*", new SearchOptions(), TestContext.Current.CancellationToken);
+
+        Assert.Null(response.Value.Coverage);
 
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
@@ -143,6 +160,8 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
         var options = new SearchOptions
         {
             ScoringProfile = "boostByRating",
+            // Supported, and set here to prove they are not dragged into someone else's
+            // rejection — a caller told to remove a working parameter would be misled.
             SessionId = "session-1",
             MinimumCoverage = 50,
         };
@@ -152,8 +171,8 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
 
         Assert.Contains("scoringProfile", ex.Message);
         Assert.Contains("scoringParameters", ex.Message);
-        Assert.Contains("minimumCoverage", ex.Message);
-        Assert.Contains("sessionId", ex.Message);
+        Assert.DoesNotContain("minimumCoverage", ex.Message);
+        Assert.DoesNotContain("sessionId", ex.Message);
 
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
@@ -165,8 +184,6 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     [Theory]
     [InlineData("scoringProfile=boostByRating", "scoringProfile")]
     [InlineData("scoringParameter=mylocation--122.2,44.8", "scoringParameters")]
-    [InlineData("sessionId=session-1", "sessionId")]
-    [InlineData("minimumCoverage=75", "minimumCoverage")]
     public async Task GetSearch_UnsupportedParameter_IsRefused(string queryString, string expected)
     {
         const string indexName = "test-unsupported-get";
@@ -201,6 +218,30 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
             TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// The replica-shaped parameters are answered on the GET path too, and coverage comes
+    /// back in the response body rather than being dropped along with them.
+    /// </summary>
+    [Fact]
+    public async Task GetSearch_MinimumCoverageAndSessionId_AreAnswered()
+    {
+        const string indexName = "test-unsupported-get-replica-params";
+        var (indexClient, _) = await SetUpAsync(indexName);
+
+        using var httpClient = factory.CreateHttpClient();
+
+        var response = await httpClient.GetAsync(
+            $"/indexes/{indexName}/docs?search=*&minimumCoverage=75&sessionId=session-1",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("@search.coverage", body);
 
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }

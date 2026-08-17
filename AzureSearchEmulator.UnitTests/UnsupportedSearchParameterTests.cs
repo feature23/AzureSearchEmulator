@@ -43,6 +43,8 @@ public class UnsupportedSearchParameterTests
             SearchMode = "all",
             Skip = 10,
             Top = 5,
+            MinimumCoverage = 75,
+            SessionId = "session-1",
         };
 
         Assert.Null(UnsupportedSearchParameters.GetRejectionMessage(request));
@@ -64,12 +66,17 @@ public class UnsupportedSearchParameterTests
         Assert.Contains("scoringParameters", UnsupportedSearchParameters.GetRejectionMessage(request));
     }
 
+    /// <summary>
+    /// A sticky session asks that repeated queries reach the same replica, which is trivially
+    /// true with one index. Nothing about the response can differ, so there is nothing to
+    /// refuse.
+    /// </summary>
     [Fact]
-    public void SessionId_IsRejected()
+    public void SessionId_IsAccepted()
     {
         var request = new SearchRequest { SessionId = "session-1" };
 
-        Assert.Contains("sessionId", UnsupportedSearchParameters.GetRejectionMessage(request));
+        Assert.Null(UnsupportedSearchParameters.GetRejectionMessage(request));
     }
 
     /// <summary>
@@ -85,28 +92,19 @@ public class UnsupportedSearchParameterTests
     }
 
     /// <summary>
-    /// 100 is Azure's default and means "the whole index must be covered", which a single
-    /// local index always satisfies. Refusing it would reject a request the emulator answers
-    /// correctly, so only a caller lowering the bar is refused.
+    /// A single local index is always fully covered, so any floor the caller sets is genuinely
+    /// met — including one below 100, which asks only that the emulator not do worse.
     /// </summary>
     [Theory]
     [InlineData(100.0)]
+    [InlineData(75.0)]
+    [InlineData(0.0)]
     [InlineData(null)]
-    public void MinimumCoverage_MetByASingleIndex_IsAccepted(double? minimumCoverage)
+    public void MinimumCoverage_IsAccepted(double? minimumCoverage)
     {
         var request = new SearchRequest { MinimumCoverage = minimumCoverage };
 
         Assert.Null(UnsupportedSearchParameters.GetRejectionMessage(request));
-    }
-
-    [Theory]
-    [InlineData(50.0)]
-    [InlineData(99.9)]
-    public void MinimumCoverage_BelowFull_IsRejected(double minimumCoverage)
-    {
-        var request = new SearchRequest { MinimumCoverage = minimumCoverage };
-
-        Assert.Contains("minimumCoverage", UnsupportedSearchParameters.GetRejectionMessage(request));
     }
 
     /// <summary>
@@ -120,8 +118,6 @@ public class UnsupportedSearchParameterTests
         {
             ScoringProfile = "boostByRating",
             ScoringParameters = ["mylocation--122.2,44.8"],
-            MinimumCoverage = 75,
-            SessionId = "session-1",
         };
 
         var message = UnsupportedSearchParameters.GetRejectionMessage(request);
@@ -129,8 +125,27 @@ public class UnsupportedSearchParameterTests
         Assert.NotNull(message);
         Assert.Contains("scoringProfile", message);
         Assert.Contains("scoringParameters", message);
-        Assert.Contains("minimumCoverage", message);
-        Assert.Contains("sessionId", message);
+    }
+
+    /// <summary>
+    /// The replica-shaped parameters must not be dragged into a refusal triggered by something
+    /// else, or a caller would be told to remove parameters that are working.
+    /// </summary>
+    [Fact]
+    public void ReplicaParameters_AreNotNamedInAnUnrelatedRejection()
+    {
+        var request = new SearchRequest
+        {
+            ScoringProfile = "boostByRating",
+            MinimumCoverage = 75,
+            SessionId = "session-1",
+        };
+
+        var message = UnsupportedSearchParameters.GetRejectionMessage(request);
+
+        Assert.NotNull(message);
+        Assert.DoesNotContain("minimumCoverage", message);
+        Assert.DoesNotContain("sessionId", message);
     }
 
     /// <summary>

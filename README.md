@@ -72,18 +72,32 @@ The following search parameters are rejected with `501 Not Implemented` rather t
 and ignored:
 
 * `scoringProfile` and `scoringParameter`/`scoringParameters` - custom relevance scoring
-* `sessionId` - sticky sessions for consistent scoring across replicas
-* `minimumCoverage`, when set below `100` - accepting partial index coverage
+  (tracked by [#47](https://github.com/feature23/AzureSearchEmulator/issues/47))
 
 Returning results that quietly differ from Azure's is the worst failure mode for an emulator:
 your code would pass locally and fail against the real service, with nothing in the local run
 pointing at the parameter that was dropped. Failing loudly instead means the gap is visible
 where it is introduced.
 
-`minimumCoverage=100` is Azure's default and is answered normally — the emulator searches a
-single local index, so coverage is always total and the requirement is genuinely met.
-Similarly, `scoringStatistics` is accepted because `local` and `global` differ only in whether
-term statistics are aggregated across replicas, and there is only one.
+### Replica-dependent parameters
+
+The emulator runs a single index, which is the same thing Azure does when a service has one
+replica. Parameters that describe how a query is spread across replicas are therefore answered
+exactly rather than approximately:
+
+* `minimumCoverage` - accepted at any value. Coverage is the percentage of the index that was
+  searched, and a single local index is always fully covered, so any floor you set is
+  genuinely met. Requests that supply it get `@search.coverage: 100` back, and — matching
+  Azure — requests that do not supply it get no `@search.coverage` field at all.
+* `sessionId` - accepted and has no effect. It asks that repeated queries be routed to the
+  same replica for consistent scoring, which is trivially true when there is only one.
+* `scoringStatistics` - accepted. `local` and `global` differ only in whether term statistics
+  are aggregated across replicas before scoring.
+
+One consequence worth knowing: a code path that handles *degraded* coverage will never be
+exercised locally, because coverage here is always 100. That is a limit of running a single
+replica rather than a difference in the response — Azure with one healthy replica answers the
+same way.
 
 ### Faceted search
 

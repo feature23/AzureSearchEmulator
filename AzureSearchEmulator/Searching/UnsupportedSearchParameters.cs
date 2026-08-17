@@ -12,8 +12,10 @@ namespace AzureSearchEmulator.Searching;
 /// <c>Collection(Edm.GeographyPoint)</c> before it was implemented — fail loudly, and let
 /// each parameter stop being refused as it is genuinely supported.
 ///
-/// <c>facets</c> and <c>select</c> were on this list when the issue was filed and are not
-/// here now: both are implemented, so both are answered rather than refused.
+/// Four of the six parameters the issue named are not refused here. <c>facets</c> and
+/// <c>select</c> are implemented. <c>minimumCoverage</c> and <c>sessionId</c> describe how a
+/// query is distributed across replicas, and a single local index satisfies both exactly
+/// rather than approximately — so answering them is faithful, not a silent divergence.
 /// </remarks>
 public static class UnsupportedSearchParameters
 {
@@ -41,21 +43,11 @@ public static class UnsupportedSearchParameters
             unsupported.Add("scoringParameters");
         }
 
-        // The emulator searches a single local index, so coverage is always total and the
-        // default of 100 is genuinely met rather than ignored. Only a caller deliberately
-        // accepting partial coverage is asking for behaviour that does not exist here.
-        if (request.MinimumCoverage is < 100)
-        {
-            unsupported.Add("minimumCoverage");
-        }
-
-        // Sticky sessions target one replica out of several; with a single index there is no
-        // routing decision to make, but honouring it silently would still mislead a caller
-        // testing that their session pinning works.
-        if (!string.IsNullOrEmpty(request.SessionId))
-        {
-            unsupported.Add("sessionId");
-        }
+        // minimumCoverage and sessionId are deliberately absent from this list: both describe
+        // how a query is spread across replicas, and a single local index answers both
+        // faithfully rather than approximately. See SearchCoverage for minimumCoverage, which
+        // is genuinely satisfied and reported; sessionId asks only that repeated queries be
+        // routed to the same replica, which is trivially true when there is one.
 
         if (unsupported.Count == 0)
         {

@@ -156,6 +156,11 @@ public class DocumentSearchingController(
             oDataResponse["@odata.count"] = JsonValue.Create(response.Count);
         }
 
+        if (response.Coverage != null)
+        {
+            oDataResponse["@search.coverage"] = JsonValue.Create(response.Coverage);
+        }
+
         if (response.Facets != null)
         {
             oDataResponse["@search.facets"] = BuildFacets(response.Facets);
