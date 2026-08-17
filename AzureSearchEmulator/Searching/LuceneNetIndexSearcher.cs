@@ -57,11 +57,18 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var query = GetQueryFromRequest(index, request);
 
+        // Facet expressions are parsed even when nothing can match, so that an invalid one is
+        // still reported as the error it is rather than silently returning no facets.
+        var facets = FacetRequest.Parse(index, request.Facets);
+
         if (query == null)
         {
             return Task.FromResult(new SearchResponse
             {
                 Count = 0,
+                // An empty match set still produces the requested facets, with every bucket
+                // at zero for a range facet and no buckets at all for a value facet.
+                Facets = facets == null ? null : FacetCounter.Empty(facets),
             });
         }
 
@@ -73,9 +80,32 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var selection = FieldSelection.Parse(index, request.Select);
 
-        var docs = searcher.Search(query, filter, request.Skip + request.Top, sort, true, true);
+        var hitsWanted = request.Skip + request.Top;
 
         var response = new SearchResponse();
+
+        // $top=0 asks for no documents at all, which is how a caller requests just a count or
+        // just the facet structure. Lucene will not build a collector for zero hits, so the
+        // document pass is skipped entirely; the count and the facets below do not depend on
+        // it. TotalHitCountCollector still gives an accurate $count.
+        if (hitsWanted == 0)
+        {
+            if (request.Count)
+            {
+                var counter = new TotalHitCountCollector();
+                searcher.Search(query, filter, counter);
+                response.Count = counter.TotalHits;
+            }
+
+            if (facets != null)
+            {
+                response.Facets = FacetCounter.Count(searcher, facets, query, filter);
+            }
+
+            return Task.FromResult(response);
+        }
+
+        var docs = searcher.Search(query, filter, hitsWanted, sort, true, true);
 
         for (var i = request.Skip; i < docs.ScoreDocs.Length; i++)
         {
@@ -99,6 +129,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         if (request.Count)
         {
             response.Count = docs.TotalHits;
+        }
+
+        if (facets != null)
+        {
+            // Counted over the whole match set rather than the page above, so paging never
+            // changes the facet counts.
+            response.Facets = FacetCounter.Count(searcher, facets, query, filter);
         }
 
         return Task.FromResult(response);
