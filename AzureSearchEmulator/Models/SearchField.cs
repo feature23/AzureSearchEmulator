@@ -36,5 +36,8 @@ public class SearchField
 
     public IList<string> SynonymMaps { get; set; } = new List<string>();
 
-    public IList<SearchField> Fields { get; } = new List<SearchField>();
+    /// <summary>
+    /// Sub-fields of an <c>Edm.ComplexType</c> or <c>Collection(Edm.ComplexType)</c> field.
+    /// </summary>
+    public IList<SearchField> Fields { get; set; } = new List<SearchField>();
 }

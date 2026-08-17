@@ -610,12 +610,12 @@ public class GeospatialTests : IDisposable
     // ===== Iterator contract =====
 
     [Fact]
-    public void GeoDocIdSet_StaysExhausted()
+    public void PredicateDocIdSet_StaysExhausted()
     {
         // NextDoc() past the end computes Advance(NO_MORE_DOCS + 1), which overflows to
         // int.MinValue. Without a guard the scan restarts from the bottom and re-emits every
         // match, so exhaustion has to be sticky.
-        var set = new GeoDocIdSet(3, acceptDocs: null, match: _ => true);
+        var set = new PredicateDocIdSet(3, acceptDocs: null, match: _ => true);
         var iterator = set.GetIterator();
 
         Assert.Equal(-1, iterator.DocID);
@@ -630,9 +630,9 @@ public class GeospatialTests : IDisposable
     }
 
     [Fact]
-    public void GeoDocIdSet_AdvancePastEnd_ReportsExhaustion()
+    public void PredicateDocIdSet_AdvancePastEnd_ReportsExhaustion()
     {
-        var iterator = new GeoDocIdSet(3, acceptDocs: null, match: _ => true).GetIterator();
+        var iterator = new PredicateDocIdSet(3, acceptDocs: null, match: _ => true).GetIterator();
 
         Assert.Equal(DocIdSetIterator.NO_MORE_DOCS, iterator.Advance(3));
     }

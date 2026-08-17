@@ -117,9 +117,8 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             var fieldParts = field.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             int maxHighlights = 5;
 
-            var indexField = index.Fields.FirstOrDefault(i => i.Name.Equals(fieldParts[0], StringComparison.OrdinalIgnoreCase));
-
-            if (indexField == null)
+            // Sub-fields of a complex type are addressed by path, i.e. "Address/City".
+            if (!ComplexTypeSupport.TryResolvePath(index, fieldParts[0], out var indexField, out var highlightPath))
             {
                 throw new InvalidOperationException($"Unable to find field '{fieldParts[0]}' in the index '{index.Name}'");
             }
@@ -132,7 +131,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 }
             }
 
-            highlightFields.Add(new HighlightField(indexField, maxHighlights));
+            highlightFields.Add(new HighlightField(indexField, maxHighlights, highlightPath));
         }
 
         return new HitHighlighter(query, request.HighlightPreTag ?? "<em>", request.HighlightPostTag ?? "</em>", highlightFields);
@@ -227,14 +226,30 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         string fieldName = sortParts[0];
 
-        var field = index.Fields.FirstOrDefault(i => i.Name.Equals(fieldName, StringComparison.OrdinalIgnoreCase));
-
-        if (field == null)
+        // A sub-field of a complex type is addressed by its path, i.e. "Address/City", and
+        // is indexed under that same name. The schema's casing wins over the caller's, since
+        // Lucene field names are case-sensitive.
+        if (!ComplexTypeSupport.TryResolvePath(index, fieldName, out var field, out var fieldPath))
         {
             throw new InvalidOperationException($"Unable to find field '{fieldName}' in the index '{index.Name}'");
         }
 
-        return new SortField(field.Name, GetSortFieldType(field), descending);
+        if (field.IsComplex())
+        {
+            throw new InvalidOperationException(
+                $"Field '{fieldName}' is of type {field.Type} and cannot be sorted on; sort by one of its sub-fields instead.");
+        }
+
+        // A sub-field beneath a Collection(Edm.ComplexType) has one value per element, so
+        // there is no single value to order by. Azure Search rejects this rather than
+        // picking an arbitrary element.
+        if (ComplexTypeSupport.FindComplexCollectionAncestorPath(index, fieldPath) is { } collectionPath)
+        {
+            throw new InvalidOperationException(
+                $"Field '{fieldName}' cannot be sorted on because '{collectionPath}' is a {ComplexTypeSupport.ComplexCollectionType}.");
+        }
+
+        return new SortField(fieldPath, GetSortFieldType(field), descending);
     }
 
     /// <summary>
@@ -362,9 +377,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             return new MatchAllDocsQuery();
         }
 
-        var firstTextField = index.Fields.FirstOrDefault(i => i.Searchable.GetValueOrDefault());
+        // Searchable sub-fields count too, and are addressed by their path.
+        var firstTextFieldPath = ComplexTypeSupport.EnumerateLeafFields(index)
+            .Where(i => i.Field.Searchable.GetValueOrDefault())
+            .Select(i => i.Path)
+            .FirstOrDefault();
 
-        if (firstTextField == null)
+        if (firstTextFieldPath == null)
         {
             throw new InvalidOperationException("Unable to search with no searchable fields");
         }
@@ -373,7 +392,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         return request.QueryType switch
         {
-            "full" => ParseFullQuery(request, firstTextField, analyzer),
+            "full" => ParseFullQuery(request, firstTextFieldPath, analyzer),
             _ => ParseSimpleQuery(index, request, analyzer)
         };
     }
@@ -397,7 +416,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         return queryParser.Parse(request.Search);
     }
 
-    private static Query? ParseFullQuery(SearchRequest request, SearchField? firstTextField, Analyzer analyzer)
+    private static Query? ParseFullQuery(SearchRequest request, string? firstTextFieldPath, Analyzer analyzer)
     {
         if (request.Search == "*" || request.Search == "*:*")
         {
@@ -409,7 +428,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             DefaultOperator = GetDefaultOperator(request.SearchMode),
         };
 
-        return queryParser.Parse(request.Search, firstTextField?.Name ?? "Text");
+        return queryParser.Parse(request.Search, firstTextFieldPath ?? "Text");
     }
 
     private static Operator GetDefaultOperator(string? searchMode)
@@ -434,16 +453,22 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     private static IEnumerable<string> GetSearchFields(SearchIndex index, string? searchFields)
     {
+        // Searchable sub-fields of a complex type are indexed — and named in searchFields —
+        // by their full path, so the candidates come from the leaves rather than the
+        // top-level fields.
+        var searchable = ComplexTypeSupport.EnumerateLeafFields(index)
+            .Where(i => i.Field.Searchable.GetValueOrDefault());
+
         if (string.IsNullOrEmpty(searchFields))
         {
-            return index.Fields.Where(i => i.Searchable.GetValueOrDefault()).Select(i => i.Name);
+            return searchable.Select(i => i.Path);
         }
 
         var fields = searchFields.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        return index.Fields
-            .Where(i => i.Searchable.GetValueOrDefault() && fields.Contains(i.Name, StringComparer.OrdinalIgnoreCase))
-            .Select(i => i.Name);
+        return searchable
+            .Where(i => fields.Contains(i.Path, StringComparer.OrdinalIgnoreCase))
+            .Select(i => i.Path);
     }
 
     private static JsonObject ConvertSearchDoc(SearchIndex index, Lucene.Net.Documents.Document doc)
@@ -452,6 +477,19 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         foreach (var field in index.Fields.Where(i => i.Retrievable))
         {
+            if (field.IsComplex())
+            {
+                // Complex values round-trip through the stored JSON sidecar rather than the
+                // flattened leaves, which cannot say which values belonged to which element
+                // of a Collection(Edm.ComplexType).
+                var storedComplexJson = doc.Get(ComplexTypeSupport.GetComplexStorageFieldName(field.Name));
+                if (storedComplexJson != null)
+                {
+                    result[field.Name] = FilterToRetrievableSubFields(field, JsonNode.Parse(storedComplexJson));
+                }
+                continue;
+            }
+
             if (field.IsCollection())
             {
                 var storedJson = doc.Get(SearchFieldExtensions.GetCollectionStorageFieldName(field.Name));
@@ -498,6 +536,63 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Strips sub-fields marked non-retrievable from a complex value read back out of its
+    /// stored JSON sidecar.
+    /// </summary>
+    /// <remarks>
+    /// The sidecar deliberately holds the document's original object so that retrieval is
+    /// faithful, but that means it also holds sub-fields the schema hides. Azure Search
+    /// applies retrievability per sub-field, so they are removed on the way out. Properties
+    /// with no matching sub-field are dropped too: they were never part of the schema and
+    /// were never indexed.
+    /// </remarks>
+    private static JsonNode? FilterToRetrievableSubFields(SearchField field, JsonNode? value)
+    {
+        switch (value)
+        {
+            case null:
+                return null;
+
+            case JsonArray array:
+            {
+                var filtered = new JsonArray();
+
+                foreach (var element in array)
+                {
+                    filtered.Add(FilterToRetrievableSubFields(field, element));
+                }
+
+                return filtered;
+            }
+
+            case JsonObject obj:
+            {
+                var filtered = new JsonObject();
+
+                foreach (var subField in field.Fields.Where(f => f.Retrievable))
+                {
+                    var subValue = obj.FirstOrDefault(p =>
+                        string.Equals(p.Key, subField.Name, StringComparison.OrdinalIgnoreCase)).Value;
+
+                    if (subValue is null)
+                    {
+                        continue;
+                    }
+
+                    filtered[subField.Name] = subField.IsComplex()
+                        ? FilterToRetrievableSubFields(subField, subValue.DeepClone())
+                        : subValue.DeepClone();
+                }
+
+                return filtered;
+            }
+
+            default:
+                return value.DeepClone();
+        }
     }
 
     private IndexSearcher GetSearcher(SearchIndex index)
