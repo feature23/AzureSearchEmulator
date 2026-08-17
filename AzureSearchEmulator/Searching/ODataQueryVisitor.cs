@@ -167,6 +167,16 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
             EnsureFilterable(equalPath);
 
+            // The caller wraps the result in MUST_NOT, so each null comparison returns the
+            // predicate to exclude: for "all(t: t ne null)" that is "the field is absent",
+            // and for "all(t: t eq null)" it is "the field has a value". Neither is decidable
+            // per value over a multi-valued field, but both agree with the whole-field
+            // reading, since a null is never indexed as an element in the first place.
+            if (equalLiteral.Value is null)
+            {
+                return HandleNullComparison(equalPath, isEqual: bin.OperatorKind == BinaryOperatorKind.NotEqual);
+            }
+
             // The caller wraps whatever comes back in MUST_NOT. For "all(t: t ne 'x')" the
             // predicate to exclude is "some value is 'x'", which is exactly the equality
             // query, so it is returned un-negated.
@@ -238,6 +248,15 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             && tokenIn.Right is LiteralToken literalToken)
         {
             EnsureFilterable(path);
+
+            // "field eq null" carries no type to dispatch on, so it is separated out before
+            // the value-typed handlers below.
+            if (literalToken.Value is null
+                && tokenIn.OperatorKind is BinaryOperatorKind.Equal or BinaryOperatorKind.NotEqual)
+            {
+                return HandleNullComparison(path, tokenIn.OperatorKind == BinaryOperatorKind.Equal);
+            }
+
             literalToken = CoerceLiteralToFieldType(path, literalToken);
             return tokenIn.OperatorKind switch
             {
@@ -259,6 +278,13 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             } && TryResolveComparisonPath(negatedOperand, out var negatedPath))
         {
             EnsureFilterable(negatedPath);
+
+            if (negatedLiteral.Value is null
+                && tokenIn.OperatorKind is BinaryOperatorKind.Equal or BinaryOperatorKind.NotEqual)
+            {
+                return HandleNullComparison(negatedPath, tokenIn.OperatorKind != BinaryOperatorKind.Equal);
+            }
+
             negatedLiteral = CoerceLiteralToFieldType(negatedPath, negatedLiteral);
             var equalQuery = tokenIn.OperatorKind switch
             {
@@ -441,10 +467,117 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         };
     }
 
+    /// <summary>
+    /// Builds a lexicographic range over a string field, with an open end represented by a
+    /// null bound.
+    /// </summary>
+    /// <remarks>
+    /// Ordering is by UTF-8 byte sequence, which is how Lucene stores terms — the same
+    /// ordinal ordering Azure Search applies to string ranges, so 'Z' sorts before 'a'.
+    ///
+    /// The range runs against the unanalyzed sidecar copy rather than the field itself: on a
+    /// searchable field the analyzed terms share the field's own name, and a range scan cannot
+    /// tell them from real values. See
+    /// <see cref="SearchFieldExtensions.GetRawStringFieldName"/>.
+    ///
+    /// The result is wrapped in a <see cref="ConstantScoreQuery"/> because a range is a filter:
+    /// it decides membership and must not influence rank. That also collapses a multi-valued
+    /// field whose several values all fall in range into a single hit.
+    /// </remarks>
+    private static Query CreateStringRangeQuery(
+        string path,
+        string? lowerBound,
+        string? upperBound,
+        bool includeLower,
+        bool includeUpper)
+    {
+        return new ConstantScoreQuery(
+            TermRangeQuery.NewStringRange(
+                SearchFieldExtensions.GetRawStringFieldName(path),
+                lowerBound,
+                upperBound,
+                includeLower,
+                includeUpper));
+    }
+
+    /// <summary>
+    /// Handles <c>field eq null</c> and <c>field ne null</c>.
+    /// </summary>
+    /// <remarks>
+    /// A null or absent value is never indexed — <c>GetDocFields</c> drops null JSON
+    /// properties, and the collection and complex writers skip null elements — so "is null"
+    /// is the absence of any indexed value under the field, and <c>ne null</c> is its
+    /// complement.
+    /// </remarks>
+    private Query HandleNullComparison(string path, bool isEqual)
+    {
+        var hasValue = BuildFieldPresenceQuery(path);
+
+        if (!isEqual)
+        {
+            // "field ne null" is exactly "the field has some value".
+            return hasValue;
+        }
+
+        return new BooleanQuery
+        {
+            Clauses =
+            {
+                new BooleanClause(new MatchAllDocsQuery(), Occur.MUST),
+                new BooleanClause(hasValue, Occur.MUST_NOT)
+            }
+        };
+    }
+
+    /// <summary>
+    /// Matches documents that have any value indexed for <paramref name="path"/>.
+    /// </summary>
+    /// <remarks>
+    /// Most field types index at least one term under their own name, so a wildcard term
+    /// scan answers this directly. Two types do not, and each needs the presence test
+    /// redirected to whatever the writer actually put in the index:
+    /// <list type="bullet">
+    /// <item><c>Edm.GeographyPoint</c> writes no term under its own name at all; its
+    /// coordinates live in the sidecar numeric fields, so presence is tested against the
+    /// latitude companion.</item>
+    /// <item>A complex field flattens into its leaves, so it is present exactly when any one
+    /// of its leaves is. A complex object whose properties are all null therefore reads as
+    /// null, which is what Azure Search reports for it.</item>
+    /// </list>
+    /// </remarks>
+    private Query BuildFieldPresenceQuery(string path)
+    {
+        var field = _index is null ? null : ComplexTypeSupport.FindFieldByPath(_index, path);
+
+        if (field is not null && field.IsComplex())
+        {
+            var leafPresence = new BooleanQuery();
+
+            foreach (var leaf in ComplexTypeSupport.EnumerateLeafFields(_index!)
+                         .Where(i => i.Path.StartsWith(path + ComplexTypeSupport.PathSeparator, StringComparison.Ordinal)))
+            {
+                leafPresence.Add(BuildFieldPresenceQuery(leaf.Path), Occur.SHOULD);
+            }
+
+            return new ConstantScoreQuery(leafPresence);
+        }
+
+        var elementType = field is not null && field.IsCollection()
+            ? SearchFieldExtensions.GetCollectionElementType(field.Type)
+            : field?.Type;
+
+        var termField = elementType == GeoSupport.GeographyPointType
+            ? GeoSupport.GetLatFieldName(path)
+            : path;
+
+        return new ConstantScoreQuery(new WildcardQuery(new Term(termField, "*")));
+    }
+
     private static Query HandleLessThanComparison(string path, LiteralToken literalToken)
     {
         return literalToken.Value switch
         {
+            string stringValue => CreateStringRangeQuery(path, null, stringValue, false, false),
             int intValue => NumericRangeQuery.NewInt32Range(path, int.MinValue, intValue, true, false),
             long longValue => NumericRangeQuery.NewInt64Range(path, long.MinValue, longValue, true, false),
             float floatValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)floatValue, true, false),
@@ -458,6 +591,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
     {
         return literalToken.Value switch
         {
+            string stringValue => CreateStringRangeQuery(path, null, stringValue, false, true),
             int intValue => NumericRangeQuery.NewInt32Range(path, int.MinValue, intValue, true, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, long.MinValue, longValue, true, true),
             float floatValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)floatValue, true, true),
@@ -471,6 +605,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
     {
         return literalToken.Value switch
         {
+            string stringValue => CreateStringRangeQuery(path, stringValue, null, false, false),
             int intValue => NumericRangeQuery.NewInt32Range(path, intValue, int.MaxValue, false, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, longValue, long.MaxValue, false, true),
             float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, double.PositiveInfinity, false, true),
@@ -484,6 +619,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
     {
         return literalToken.Value switch
         {
+            string stringValue => CreateStringRangeQuery(path, stringValue, null, true, false),
             int intValue => NumericRangeQuery.NewInt32Range(path, intValue, int.MaxValue, true, true),
             long longValue => NumericRangeQuery.NewInt64Range(path, longValue, long.MaxValue, true, true),
             float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, double.PositiveInfinity, true, true),
@@ -952,7 +1088,13 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             throw new InvalidOperationException("SearchIndex is required for search.ismatch function");
         }
 
-        return ParseFullTextSearchQuery(searchText, searchFields, queryType, searchMode);
+        var query = ParseFullTextSearchQuery(searchText, searchFields, queryType, searchMode);
+
+        // search.ismatch is a pure filter: it decides whether a document matches but must not
+        // influence its rank, so its term frequencies are flattened to a constant score.
+        // search.ismatchscoring keeps the parsed query's scores, which is the only thing that
+        // distinguishes the two functions.
+        return includeScoring ? query : new ConstantScoreQuery(query);
     }
 
     private Query ParseFullTextSearchQuery(string searchText, string? searchFields, string queryType, string searchMode)

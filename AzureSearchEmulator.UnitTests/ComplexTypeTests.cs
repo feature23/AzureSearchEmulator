@@ -207,6 +207,35 @@ public class ComplexTypeTests : IDisposable
             .ToList();
     }
 
+    // ===== Null and string-range comparisons (issue #44) =====
+
+    [Fact]
+    public async Task Filter_StringRange_InsideComplexCollectionLambda()
+    {
+        // Room types are Deluxe and Standard (1), Suite (2), and two Standards (3). The
+        // per-element evaluator has to order strings the same way the flattened Lucene path
+        // does, so that a lambda and a top-level range agree.
+        Assert.Equal(["2"], await SearchIds("Rooms/any(r: r/Type gt 'Standard')"));
+        Assert.Equal(["1", "2", "3"], await SearchIds("Rooms/any(r: r/Type ge 'Deluxe')"));
+    }
+
+    [Fact]
+    public async Task Filter_StringRange_InsideAllLambda()
+    {
+        // Hotel 2's only room is a Suite and hotel 3's are both Standard, so both qualify;
+        // hotel 1 has a Deluxe, which does not. "Empty Inn" has no rooms at all, and all()
+        // over an empty collection is vacuously true.
+        Assert.Equal(["2", "3", "4"], await SearchIds("Rooms/all(r: r/Type ge 'Standard')"));
+    }
+
+    [Fact]
+    public async Task Filter_EqNull_OnComplexSubFieldPath()
+    {
+        // Every hotel populates Address/City, so nothing is null and everything is non-null.
+        Assert.Empty(await SearchIds("Address/City eq null"));
+        Assert.Equal(["1", "2", "3", "4"], await SearchIds("Address/City ne null"));
+    }
+
     // ===== Filtering on a sub-field path =====
 
     [Fact]
