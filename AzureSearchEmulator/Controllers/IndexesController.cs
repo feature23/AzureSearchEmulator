@@ -107,6 +107,11 @@ public class IndexesController(
             return IndexJson(index, StatusCodes.Status201Created);
         }
 
+        if (IndexSchemaChangeValidator.FindDisallowedChange(existing, index) is { } schemaError)
+        {
+            return BadRequest(schemaError);
+        }
+
         await searchIndexRepository.Update(index);
 
         // Clear cached Lucene resources so schema changes take effect. Writer first: it
