@@ -69,6 +69,9 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 // An empty match set still produces the requested facets, with every bucket
                 // at zero for a range facet and no buckets at all for a value facet.
                 Facets = facets == null ? null : FacetCounter.Empty(facets),
+                // Coverage describes how much of the index was searched, not how much of it
+                // matched, so a query that cannot match anything still reports it in full.
+                Coverage = SearchCoverage.GetCoverage(request),
             });
         }
 
@@ -82,7 +85,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var hitsWanted = request.Skip + request.Top;
 
-        var response = new SearchResponse();
+        var response = new SearchResponse { Coverage = SearchCoverage.GetCoverage(request) };
 
         // $top=0 asks for no documents at all, which is how a caller requests just a count or
         // just the facet structure. Lucene will not build a collector for zero hits, so the

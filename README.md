@@ -51,6 +51,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
     sub-field paths, i.e. `Address/City eq 'Seattle'`
   * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`, including
     sorting by distance, i.e. `geo.distance(Location, geography'POINT(-122.131577 47.678581)') asc`
+  * `$select` - Comma-delimited list of fields to return, i.e. `Id,Name,Address/City`; a path may
+    name a complex field to take it whole or reach inside one to take a single sub-field
   * `facet` - Field to compute facet buckets over, repeatable, with optional
     `count`/`sort`/`values`/`interval`/`timeoffset` options, i.e. `facet=Category,count:5`
     (see Faceted search below)
@@ -63,6 +65,39 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
+
+### Unsupported search parameters
+
+The following search parameters are rejected with `501 Not Implemented` rather than accepted
+and ignored:
+
+* `scoringProfile` and `scoringParameter`/`scoringParameters` - custom relevance scoring
+  (tracked by [#47](https://github.com/feature23/AzureSearchEmulator/issues/47))
+
+Returning results that quietly differ from Azure's is the worst failure mode for an emulator:
+your code would pass locally and fail against the real service, with nothing in the local run
+pointing at the parameter that was dropped. Failing loudly instead means the gap is visible
+where it is introduced.
+
+### Replica-dependent parameters
+
+The emulator runs a single index, which is the same thing Azure does when a service has one
+replica. Parameters that describe how a query is spread across replicas are therefore answered
+exactly rather than approximately:
+
+* `minimumCoverage` - accepted at any value. Coverage is the percentage of the index that was
+  searched, and a single local index is always fully covered, so any floor you set is
+  genuinely met. Requests that supply it get `@search.coverage: 100` back, and — matching
+  Azure — requests that do not supply it get no `@search.coverage` field at all.
+* `sessionId` - accepted and has no effect. It asks that repeated queries be routed to the
+  same replica for consistent scoring, which is trivially true when there is only one.
+* `scoringStatistics` - accepted. `local` and `global` differ only in whether term statistics
+  are aggregated across replicas before scoring.
+
+One consequence worth knowing: a code path that handles *degraded* coverage will never be
+exercised locally, because coverage here is always 100. That is a limit of running a single
+replica rather than a difference in the response — Azure with one healthy replica answers the
+same way.
 
 ### Faceted search
 
