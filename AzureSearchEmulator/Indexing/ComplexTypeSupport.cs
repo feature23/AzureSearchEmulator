@@ -54,6 +54,20 @@ public static class ComplexTypeSupport
     public static string GetComplexStorageFieldName(string fieldName) => "__azs_complex__" + fieldName;
 
     /// <summary>
+    /// Doc values holding the elements of a complex collection, so that a lambda filter can
+    /// evaluate its predicate against one element at a time.
+    /// </summary>
+    /// <remarks>
+    /// This is deliberately separate from <see cref="GetComplexStorageFieldName"/>: that
+    /// sidecar is only written for retrievable fields and is read through stored-field
+    /// access, which needs a per-document seek. Filtering runs over far more documents than
+    /// it returns, so the elements are also written as column-stride doc values, which is
+    /// what <c>Collection(Edm.GeographyPoint)</c> already does for its points.
+    /// </remarks>
+    public static string GetComplexElementsDocValuesFieldName(string fieldName)
+        => "__azs_complex_dv__" + fieldName;
+
+    /// <summary>
     /// Walks a complex field's sub-fields, yielding every leaf together with its full
     /// slash-delimited path.
     /// </summary>

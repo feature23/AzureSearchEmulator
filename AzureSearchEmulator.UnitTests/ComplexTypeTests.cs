@@ -318,18 +318,19 @@ public class ComplexTypeTests : IDisposable
     }
 
     [Fact]
-    public async Task All_WithEqualityOverACollection_IsRejected()
+    public async Task All_WithEqualityOverAComplexCollection_IsSupported()
     {
-        // "every value equals x" would require knowing whether a document holds some *other*
-        // value too, which the per-value indexing model cannot answer. Azure Search likewise
-        // restricts all(...) over a collection to 'ne' and the comparison operators.
-        await Assert.ThrowsAsync<NotImplementedException>(() =>
-            _searcher.Search(_helper.Index, new SearchRequest
-            {
-                Search = "*",
-                Filter = "Rooms/all(r: r/SmokingAllowed eq false)",
-                Top = 50
-            }));
+        // Azure Search allows "everything except search.ismatch" inside any/all over a
+        // Collection(Edm.ComplexType) — the eq/ne restriction applies to
+        // Collection(Edm.String), not to complex collections. This exact form appears in the
+        // $filter reference: "Rooms/all(room: room/SmokingAllowed eq false)".
+        // https://learn.microsoft.com/en-us/azure/search/search-query-odata-collection-operators#limitations
+        //
+        // Hotel 1's rooms are both non-smoking; hotels 2 and 3 have a smoking room each.
+        // Hotel 4 has no rooms, so "all" holds vacuously.
+        var ids = await SearchIds("Rooms/all(r: r/SmokingAllowed eq false)");
+
+        Assert.Equal(["1", "4"], ids);
     }
 
     [Fact]

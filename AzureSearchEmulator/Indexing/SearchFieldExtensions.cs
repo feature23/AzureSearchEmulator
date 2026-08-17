@@ -1,8 +1,10 @@
+using System.Text;
 using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Searching;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
+using Lucene.Net.Util;
 
 namespace AzureSearchEmulator.Indexing;
 
@@ -80,12 +82,18 @@ public static class SearchFieldExtensions
                     continue;
                 }
 
-                // Every element's leaves share the same Lucene field names, which is what
-                // makes an any(...) lambda match a document when any one element qualifies.
-                // The flip side is that leaves are no longer correlated per element — a
-                // limitation Azure Search shares for filters that don't use a lambda.
+                // Every element's leaves share the same Lucene field names. That makes them a
+                // cheap candidate filter, but it does not preserve which values belonged to
+                // the same element, so the elements are also written whole (below) for the
+                // lambda filter to correlate against.
                 fields.AddRange(CreateComplexObjectFields(field, element, path));
             }
+
+            // Written regardless of retrievability: this is what filters read, and a hidden
+            // complex collection still has to be filterable.
+            fields.Add(new BinaryDocValuesField(
+                ComplexTypeSupport.GetComplexElementsDocValuesFieldName(path),
+                new BytesRef(Encoding.UTF8.GetBytes(array.ToJsonString()))));
         }
         else
         {
@@ -128,12 +136,19 @@ public static class SearchFieldExtensions
             var subPath = ComplexTypeSupport.CombinePath(path, subField.Name);
 
             // Nested complex sub-fields recurse through CreateFields, but must not each write
-            // their own JSON sidecar: the outermost complex field already stored the whole
-            // object, and a nested duplicate would be dead weight that retrieval never reads.
+            // their own whole-value copies. The outermost complex field already stored the
+            // object, so a nested JSON sidecar would be dead weight retrieval never reads.
+            //
+            // The element doc values matter more: Lucene allows only one doc-values value per
+            // field name per document, so a complex collection nested inside another would
+            // overwrite itself once per outer element and throw at commit. The nested
+            // elements are reachable inside the outer field's own copy, which is how the
+            // lambda evaluator recurses into them.
             foreach (var indexField in CreateFields(subField, subValue, subPath))
             {
                 if (subField.IsComplex()
-                    && indexField.Name == ComplexTypeSupport.GetComplexStorageFieldName(subPath))
+                    && (indexField.Name == ComplexTypeSupport.GetComplexStorageFieldName(subPath)
+                        || indexField.Name == ComplexTypeSupport.GetComplexElementsDocValuesFieldName(subPath)))
                 {
                     continue;
                 }

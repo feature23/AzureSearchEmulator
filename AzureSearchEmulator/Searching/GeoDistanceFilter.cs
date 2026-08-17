@@ -27,7 +27,7 @@ public class GeoDistanceFilter(
 
         var getPoints = GeoSupport.GetPointReader(reader, fieldName);
 
-        return new GeoDocIdSet(reader.MaxDoc, acceptDocs, doc =>
+        return new PredicateDocIdSet(reader.MaxDoc, acceptDocs, doc =>
         {
             var points = getPoints(doc);
 

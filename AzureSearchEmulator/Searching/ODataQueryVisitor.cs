@@ -32,6 +32,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         var path = ResolveLambdaPath(tokenIn.Parent);
         EnsureFilterable(path);
 
+        var lambdaField = _index is null ? null : ComplexTypeSupport.FindFieldByPath(_index, path);
+        var isComplexCollection = lambdaField?.IsComplexCollection() == true;
+
         // any() with no expression: matches docs where the collection is non-empty.
         // Lucene equivalent: the field must have at least one indexed term.
         if (string.IsNullOrEmpty(tokenIn.Parameter) || tokenIn.Expression is LiteralToken { Value: bool b } && b)
@@ -42,8 +45,25 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
                 return new MatchAllDocsQuery();
             }
 
+            // A complex collection is tested against its stored elements rather than its
+            // indexed leaves: an element whose sub-fields are all null indexes no term at
+            // all, so a leaf-presence test would report a non-empty collection as empty.
+            if (isComplexCollection)
+            {
+                return new ComplexCollectionLambdaQuery(
+                    path, isAll: false, _ => true, candidatePrefilter: null, $"{path}/any()");
+            }
+
             // Match docs that have the field present (any indexed value).
             return new ConstantScoreQuery(new WildcardQuery(new Term(path, "*")));
+        }
+
+        // A lambda over a complex collection is evaluated per element, so that every
+        // criterion inside it applies to the same element. The flattened leaf fields cannot
+        // express that correlation — see ComplexLambdaEvaluator.
+        if (isComplexCollection)
+        {
+            return VisitComplexCollectionLambda(tokenIn, isAll, path, lambdaField!);
         }
 
         _lambdaContexts.Push(new LambdaContext(path, tokenIn.Parameter));
@@ -77,6 +97,46 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         {
             _lambdaContexts.Pop();
         }
+    }
+
+    /// <summary>
+    /// Builds the per-element query for a lambda over a <c>Collection(Edm.ComplexType)</c>.
+    /// </summary>
+    /// <remarks>
+    /// For <c>any</c>, the flattened translation of the body is reused as a candidate
+    /// prefilter: it ignores which element each value came from, so it matches a superset of
+    /// the correct answer and can only ever be narrowed by the exact per-element test. It is
+    /// skipped when the body contains a construct the flattened path cannot translate, since
+    /// a prefilter is only an optimization.
+    /// </remarks>
+    private Query VisitComplexCollectionLambda(LambdaToken tokenIn, bool isAll, string path, SearchField field)
+    {
+        var predicate = ComplexLambdaEvaluator.Compile(tokenIn.Expression, tokenIn.Parameter, field, path);
+
+        Query? prefilter = null;
+
+        if (!isAll)
+        {
+            _lambdaContexts.Push(new LambdaContext(path, tokenIn.Parameter));
+            try
+            {
+                prefilter = tokenIn.Expression.Accept(this);
+            }
+            catch (Exception)
+            {
+                // The body uses something the flattened translation does not handle. The
+                // exact evaluation below still covers it, so the query runs unprefiltered.
+                prefilter = null;
+            }
+            finally
+            {
+                _lambdaContexts.Pop();
+            }
+        }
+
+        var description = $"{path}/{(isAll ? "all" : "any")}({tokenIn.Parameter}: ...)";
+
+        return new ComplexCollectionLambdaQuery(path, isAll, predicate, prefilter, description);
     }
 
     private Query NegateLambdaExpression(QueryToken expression)
@@ -115,13 +175,13 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
                 return HandleEqualComparison(equalPath, CoerceLiteralToFieldType(equalPath, equalLiteral));
             }
 
-            // "all(t: t eq 'x')" would need "every value is 'x'", i.e. the document has 'x'
-            // and holds no other value. Values of a multi-valued field are indexed as
-            // independent terms under one field name, so there is no way to ask Lucene
-            // whether some *other* value is also present. Azure Search likewise restricts
-            // all(...) over a collection to 'ne' and the comparison operators.
+            // "all(t: t eq 'x')" needs "every value is 'x'", which over a multi-valued field
+            // means excluding documents that hold some *other* value — a question the
+            // inverted index cannot answer directly. It is only decidable where values are
+            // correlated per element, which is why Azure Search allows eq inside all(...)
+            // for Collection(Edm.ComplexType) but not for Collection(Edm.String).
             throw new NotImplementedException(
-                "all(...) with 'eq' over a collection is not supported; use 'ne' or a comparison operator.");
+                "all(...) with 'eq' requires per-element correlation.");
         }
 
         var inverted = bin.OperatorKind switch

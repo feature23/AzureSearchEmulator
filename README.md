@@ -97,15 +97,31 @@ one of its elements satisfies the predicate:
 ```
 $filter=Rooms/any(r: r/Type eq 'Deluxe')
 $filter=Rooms/any(r: r/Tags/any(t: t eq 'wifi'))
+$filter=Rooms/all(r: r/SmokingAllowed eq false)
+$filter=Rooms/any()                                  # the collection is non-empty
 ```
 
-Two limitations are worth noting, both matching Azure Search's own behavior:
+Criteria inside a lambda are **correlated**: they all apply to the same element. So
 
-* Sub-fields of a `Collection(Edm.ComplexType)` cannot be sorted on, since a document has one
-  value per element rather than a single value to order by.
-* Inside `all(...)` over a collection, use `ne` or a comparison operator. `all(r: r/X eq 'y')`
-  is rejected, because answering it would require knowing whether an element holds some
-  *other* value, which the per-value indexing model cannot express.
+```
+$filter=Rooms/any(r: r/Type eq 'Deluxe' and r/BaseRate lt 100)
+```
+
+matches only a hotel with a single room that is both a deluxe *and* under 100 — not one whose
+deluxe room is expensive and whose cheap room is a standard. As in Azure Search,
+[`any`/`all` over a complex collection accept any filter construct][collection-ops] except
+`search.ismatch`/`search.ismatchscoring`, and a lambda body may only reference fields bound to
+its own range variable.
+
+Note that the more restrictive rules Azure documents for *primitive* collections still apply
+to those — `Collection(Edm.String)`, for instance, allows only `eq`/`search.in` inside `any`
+and only `ne`/`not search.in` inside `all`.
+
+One limitation is worth noting, matching Azure Search's own behavior: sub-fields of a
+`Collection(Edm.ComplexType)` cannot be sorted on, since a document has one value per element
+rather than a single value to order by.
+
+[collection-ops]: https://learn.microsoft.com/en-us/azure/search/search-query-odata-collection-operators#limitations
 
 Metadata about indexes are stored as JSON files in the `indexes` folder. 
 Once documents have been added, a subfolder with the index name is created where the Lucene.net index data is stored.

@@ -93,7 +93,7 @@ public class GeoIntersectsFilter(string fieldName, IReadOnlyList<(double Lon, do
         // of the existential test below: a document with no points has nothing inside the
         // polygon. For a collection, matching any single point mirrors the any() lambda that
         // Azure requires around this filter.
-        return new GeoDocIdSet(reader.MaxDoc, acceptDocs, doc =>
+        return new PredicateDocIdSet(reader.MaxDoc, acceptDocs, doc =>
             getPoints(doc).Any(point => GeoSupport.IsPointInPolygon(ring, point.Lon, point.Lat)));
     }
 

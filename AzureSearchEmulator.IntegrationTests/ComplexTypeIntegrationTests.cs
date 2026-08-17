@@ -176,6 +176,111 @@ public class ComplexTypeIntegrationTests(EmulatorFactory factory)
     }
 
     [Fact]
+    public async Task Any_WithTwoCriteria_CorrelatesThemToTheSameRoom()
+    {
+        const string indexName = "test-complex-correlation";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateHotelIndexAsync(indexClient, indexName);
+        await UploadHotelsAsync(searchClient);
+
+        // The documented example. Criteria inside one lambda apply to the same element, so
+        // this returns hotels with at least one deluxe room that is itself under 130.
+        // Seattle's Deluxe room costs 250 and its cheap room is a Standard, so it must not
+        // match — that combination is precisely what uncorrelated evaluation gets wrong.
+        // https://learn.microsoft.com/en-us/azure/search/search-query-understand-collection-filters#correlated-versus-uncorrelated-search
+        var ids = await SearchIdsAsync(searchClient, new SearchOptions
+        {
+            Filter = "Rooms/any(r: r/Type eq 'Deluxe' and r/BaseRate lt 130)",
+            Size = 50
+        });
+
+        Assert.Empty(ids);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Any_WithTwoCriteria_MatchesWhenOneRoomSatisfiesBoth()
+    {
+        const string indexName = "test-complex-correlation-match";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateHotelIndexAsync(indexClient, indexName);
+        await UploadHotelsAsync(searchClient);
+
+        // Portland's two Standard rooms cost 90 and 95, so a single room satisfies both
+        // criteria. The counterpart to the test above: correlation must not reject genuine
+        // matches either.
+        var ids = await SearchIdsAsync(searchClient, new SearchOptions
+        {
+            Filter = "Rooms/any(r: r/Type eq 'Standard' and r/BaseRate lt 100)",
+            Size = 50
+        });
+
+        Assert.Equal(["portland"], ids);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task All_WithEquality_IsSupportedOverAComplexCollection()
+    {
+        const string indexName = "test-complex-all-equality";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateHotelIndexAsync(indexClient, indexName);
+        await UploadHotelsAsync(searchClient);
+
+        // Documented as valid in the $filter reference:
+        // "$filter=ParkingIncluded eq true and Rooms/all(room: room/SmokingAllowed eq false)"
+        // Seattle's rooms are both non-smoking; Bellevue and Portland each have a smoking
+        // room. The two room-less hotels match vacuously.
+        var ids = await SearchIdsAsync(searchClient, new SearchOptions
+        {
+            Filter = "Rooms/all(r: r/SmokingAllowed eq false)",
+            Size = 50
+        });
+
+        Assert.Equal(["empty", "noaddress", "seattle"], ids);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AnyWithNoLambda_DistinguishesEmptyFromNonEmptyCollections()
+    {
+        const string indexName = "test-complex-any-empty";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateHotelIndexAsync(indexClient, indexName);
+        await UploadHotelsAsync(searchClient);
+
+        // "Rooms/any()" and "not Rooms/any()" are the documented way to test a complex
+        // collection for elements.
+        var nonEmpty = await SearchIdsAsync(searchClient, new SearchOptions
+        {
+            Filter = "Rooms/any()",
+            Size = 50
+        });
+
+        var empty = await SearchIdsAsync(searchClient, new SearchOptions
+        {
+            Filter = "not Rooms/any()",
+            Size = 50
+        });
+
+        Assert.Equal(["bellevue", "portland", "seattle"], nonEmpty);
+        Assert.Equal(["empty", "noaddress"], empty);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task Any_OnPrimitiveCollectionNestedInComplexCollection_Matches()
     {
         const string indexName = "test-complex-nested-collection";

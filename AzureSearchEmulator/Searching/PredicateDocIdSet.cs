@@ -5,9 +5,10 @@ namespace AzureSearchEmulator.Searching;
 
 /// <summary>
 /// A <see cref="DocIdSet"/> that evaluates a per-document predicate lazily as it is iterated,
-/// used by the geospatial filters to apply their exact geometry test.
+/// used by filters whose exact test is too expensive to precompute — the geospatial geometry
+/// tests, and the per-element evaluation of a complex collection's lambda.
 /// </summary>
-public class GeoDocIdSet(int maxDoc, IBits? acceptDocs, Func<int, bool> match) : DocIdSet
+public class PredicateDocIdSet(int maxDoc, IBits? acceptDocs, Func<int, bool> match) : DocIdSet
 {
     public override DocIdSetIterator GetIterator() => new Iterator(maxDoc, acceptDocs, match);
 
