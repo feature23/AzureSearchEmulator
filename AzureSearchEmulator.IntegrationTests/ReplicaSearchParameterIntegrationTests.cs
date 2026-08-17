@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Json;
 using Azure;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Indexes;
@@ -11,49 +10,21 @@ using SearchIndex = Azure.Search.Documents.Indexes.Models.SearchIndex;
 namespace AzureSearchEmulator.IntegrationTests;
 
 /// <summary>
-/// Integration tests for the refusal of search parameters the emulator accepts but does not
-/// act on (issue #39), run against a containerized emulator.
+/// Integration tests for the search parameters that describe how a query is spread across
+/// replicas, which a single local index answers exactly rather than approximately (issue #39).
 /// </summary>
 /// <remarks>
-/// These run against the real HTTP surface because that is where the bug lived: the
-/// parameters were bound off the wire and then dropped, so a test that never crosses the
-/// wire cannot show that they now arrive and are refused. The GET cases matter for the same
-/// reason — Azure's GET syntax names <c>scoringParameter</c> in the singular, and a binding
-/// that missed it would let the parameter through unnoticed, which is the original bug in a
-/// new place.
+/// These run against the real HTTP surface because the parameters are read off the wire, and
+/// the GET cases matter especially: Azure's GET syntax spells some of them differently from the
+/// POST body, so a binding that missed one would let it through unnoticed.
+///
+/// This file previously also covered <c>scoringProfile</c> and <c>scoringParameters</c>, which
+/// were refused with a 501 until scoring profiles were implemented in issue #47. They are now
+/// answered, and are covered by <see cref="ScoringProfileIntegrationTests"/>.
 /// </remarks>
-public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
+public class ReplicaSearchParameterIntegrationTests(EmulatorFactory factory)
     : IClassFixture<EmulatorFactory>
 {
-    [Fact]
-    public async Task ScoringProfile_IsRefused()
-    {
-        const string indexName = "test-unsupported-scoring-profile";
-        var (indexClient, searchClient) = await SetUpAsync(indexName);
-
-        var options = new SearchOptions { ScoringProfile = "boostByRating" };
-
-        var ex = await AssertRefusedAsync(searchClient, options);
-        Assert.Contains("scoringProfile", ex.Message);
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
-    [Fact]
-    public async Task ScoringParameters_AreRefused()
-    {
-        const string indexName = "test-unsupported-scoring-parameters";
-        var (indexClient, searchClient) = await SetUpAsync(indexName);
-
-        var options = new SearchOptions();
-        options.ScoringParameters.Add("mylocation--122.2,44.8");
-
-        var ex = await AssertRefusedAsync(searchClient, options);
-        Assert.Contains("scoringParameters", ex.Message);
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
     /// <summary>
     /// A sticky session cannot change the response when there is one replica, so it is
     /// answered rather than refused.
@@ -61,7 +32,7 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     [Fact]
     public async Task SessionId_IsAnswered()
     {
-        const string indexName = "test-unsupported-session-id";
+        const string indexName = "test-replica-session-id";
         var (indexClient, searchClient) = await SetUpAsync(indexName);
 
         var options = new SearchOptions { SessionId = "session-1" };
@@ -84,7 +55,7 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     [InlineData(75.0)]
     public async Task MinimumCoverage_IsAnsweredAndCoverageReported(double minimumCoverage)
     {
-        const string indexName = "test-unsupported-minimum-coverage";
+        const string indexName = "test-replica-minimum-coverage";
         var (indexClient, searchClient) = await SetUpAsync(indexName);
 
         var options = new SearchOptions { MinimumCoverage = minimumCoverage };
@@ -109,7 +80,7 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     [Fact]
     public async Task WithoutMinimumCoverage_CoverageIsNotReported()
     {
-        const string indexName = "test-unsupported-coverage-absent";
+        const string indexName = "test-replica-coverage-absent";
         var (indexClient, searchClient) = await SetUpAsync(indexName);
 
         var response = await searchClient.SearchAsync<SearchDocument>(
@@ -121,13 +92,12 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     }
 
     /// <summary>
-    /// The parameters that are actually implemented must keep working; a refusal rule that
-    /// caught them would be a worse regression than the silent divergence it replaced.
+    /// The parameters that are actually implemented must keep working.
     /// </summary>
     [Fact]
     public async Task SupportedParameters_AreStillAnswered()
     {
-        const string indexName = "test-unsupported-supported-still-work";
+        const string indexName = "test-replica-supported-still-work";
         var (indexClient, searchClient) = await SetUpAsync(indexName);
 
         var options = new SearchOptions
@@ -151,64 +121,14 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
-    [Fact]
-    public async Task AllUnsupportedParameters_AreReportedTogether()
-    {
-        const string indexName = "test-unsupported-all";
-        var (indexClient, searchClient) = await SetUpAsync(indexName);
-
-        var options = new SearchOptions
-        {
-            ScoringProfile = "boostByRating",
-            // Supported, and set here to prove they are not dragged into someone else's
-            // rejection — a caller told to remove a working parameter would be misled.
-            SessionId = "session-1",
-            MinimumCoverage = 50,
-        };
-        options.ScoringParameters.Add("mylocation--122.2,44.8");
-
-        var ex = await AssertRefusedAsync(searchClient, options);
-
-        Assert.Contains("scoringProfile", ex.Message);
-        Assert.Contains("scoringParameters", ex.Message);
-        Assert.DoesNotContain("minimumCoverage", ex.Message);
-        Assert.DoesNotContain("sessionId", ex.Message);
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>
-    /// The GET form of search, which binds its parameters off the query string rather than a
-    /// JSON body and so has its own chance to drop one.
-    /// </summary>
-    [Theory]
-    [InlineData("scoringProfile=boostByRating", "scoringProfile")]
-    [InlineData("scoringParameter=mylocation--122.2,44.8", "scoringParameters")]
-    public async Task GetSearch_UnsupportedParameter_IsRefused(string queryString, string expected)
-    {
-        const string indexName = "test-unsupported-get";
-        var (indexClient, _) = await SetUpAsync(indexName);
-
-        using var httpClient = factory.CreateHttpClient();
-
-        var response = await httpClient.GetAsync(
-            $"/indexes/{indexName}/docs?search=*&{queryString}",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
-        Assert.Contains(expected, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
     /// <summary>
     /// A GET carrying only supported parameters must still be answered, so the query-string
-    /// bindings added for the refusal do not themselves break the working path.
+    /// bindings do not themselves break the working path.
     /// </summary>
     [Fact]
     public async Task GetSearch_SupportedParametersOnly_IsAnswered()
     {
-        const string indexName = "test-unsupported-get-supported";
+        const string indexName = "test-replica-get-supported";
         var (indexClient, _) = await SetUpAsync(indexName);
 
         using var httpClient = factory.CreateHttpClient();
@@ -229,7 +149,7 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     [Fact]
     public async Task GetSearch_MinimumCoverageAndSessionId_AreAnswered()
     {
-        const string indexName = "test-unsupported-get-replica-params";
+        const string indexName = "test-replica-get-params";
         var (indexClient, _) = await SetUpAsync(indexName);
 
         using var httpClient = factory.CreateHttpClient();
@@ -244,48 +164,6 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
         Assert.Contains("@search.coverage", body);
 
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>
-    /// The refusal is reported as itself even when the index does not exist, so a caller is
-    /// not sent chasing a 404 for an index that was never the problem.
-    /// </summary>
-    [Fact]
-    public async Task UnsupportedParameter_OnMissingIndex_ReportsTheParameter()
-    {
-        // The raw HttpClient has no retry, unlike the SDK clients, so it cannot absorb the
-        // connection failures that happen while the container's TLS listener is still coming
-        // up — the wait strategy only checks that the port is open. Going through the SDK
-        // first blocks until the emulator is genuinely serving.
-        await factory.WaitUntilServingAsync();
-
-        using var httpClient = factory.CreateHttpClient();
-
-        var response = await httpClient.PostAsJsonAsync(
-            "/indexes/test-unsupported-no-such-index/docs/search",
-            new { search = "*", scoringProfile = "boostByRating" },
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
-        Assert.Contains(
-            "scoringProfile",
-            await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-    }
-
-    /// <summary>
-    /// Runs a search expected to be refused, returning the failure so the caller can assert
-    /// on which parameters it names.
-    /// </summary>
-    private static async Task<RequestFailedException> AssertRefusedAsync(
-        SearchClient searchClient,
-        SearchOptions options)
-    {
-        var ex = await Assert.ThrowsAsync<RequestFailedException>(() =>
-            searchClient.SearchAsync<SearchDocument>("*", options, TestContext.Current.CancellationToken));
-
-        Assert.Equal((int)HttpStatusCode.NotImplemented, ex.Status);
-
-        return ex;
     }
 
     private async Task<(SearchIndexClient IndexClient, SearchClient SearchClient)> SetUpAsync(string indexName)

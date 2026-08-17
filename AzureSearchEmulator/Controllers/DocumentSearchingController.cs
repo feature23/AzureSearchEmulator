@@ -132,14 +132,6 @@ public class DocumentSearchingController(
             return BadRequest(ModelState);
         }
 
-        // Checked before the index lookup so that an unsupported parameter is reported as
-        // itself, rather than being masked by a 404 for an index the caller has not created
-        // yet. See UnsupportedSearchParameters for why these are refused instead of ignored.
-        if (UnsupportedSearchParameters.GetRejectionMessage(request) is { } rejection)
-        {
-            return StatusCode(StatusCodes.Status501NotImplemented, rejection);
-        }
-
         var index = await searchIndexRepository.Get(indexKey);
 
         if (index == null)
@@ -147,7 +139,19 @@ public class DocumentSearchingController(
             return NotFound($"The specified index does not exist. Index Key: {indexKey}");
         }
 
-        var response = await indexSearcher.Search(index, request);
+        SearchResponse response;
+
+        try
+        {
+            response = await indexSearcher.Search(index, request);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A scoring profile the index does not define, or one whose scoring parameters the
+            // request left out, is a fault in the request rather than in the emulator — the
+            // same reasoning as the suggester errors below (issue #47).
+            return BadRequest(ex.Message);
+        }
 
         var oDataResponse = new JsonObject();
 

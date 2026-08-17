@@ -63,6 +63,11 @@ public class IndexesController(
             return BadRequest(complexError);
         }
 
+        if (ScoringProfileValidator.FindInvalidProfile(index) is { } scoringError)
+        {
+            return BadRequest(scoringError);
+        }
+
         try
         {
             await searchIndexRepository.Create(index);
@@ -97,6 +102,11 @@ public class IndexesController(
         if (ValidateComplexFields(index) is { } complexError)
         {
             return BadRequest(complexError);
+        }
+
+        if (ScoringProfileValidator.FindInvalidProfile(index) is { } scoringError)
+        {
+            return BadRequest(scoringError);
         }
 
         var existing = await searchIndexRepository.Get(key);

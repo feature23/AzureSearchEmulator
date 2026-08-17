@@ -83,10 +83,18 @@ public class IndexRoundTripTests
         Assert.Equal(["id", "description"], index.Fields.Select(i => i.Name));
         Assert.True(index.Fields[0].Key);
         Assert.True(index.Fields[1].Searchable);
+
+        // Modelled since issue #47, so it deserializes into the property rather than the
+        // extension bag.
+        var profile = Assert.Single(index.ScoringProfiles);
+        Assert.Equal("boostDescription", profile.Name);
+        Assert.Equal(2.5, profile.Text?.Weights["description"]);
     }
 
     [Theory]
-    [InlineData("scoringProfiles")]
+    // scoringProfiles is deliberately absent: it became a modelled property in issue #47, so it
+    // no longer travels through the extension bag. ModelledProperties_SurviveRoundTrip covers
+    // it instead.
     [InlineData("corsOptions")]
     [InlineData("analyzers")]
     [InlineData("similarity")]
@@ -106,10 +114,7 @@ public class IndexRoundTripTests
         var result = RoundTrip(FullIndexJson);
 
         // Not just present but usable: the nested shape and the numeric types have to survive,
-        // otherwise a client re-reading its own scoring profile finds it unusable.
-        var weight = result["scoringProfiles"]?[0]?["text"]?["weights"]?["description"];
-        Assert.Equal(2.5, weight?.GetValue<double>());
-
+        // otherwise a client re-reading its own definition finds it unusable.
         var origins = result["corsOptions"]?["allowedOrigins"]?.AsArray();
         Assert.Equal("*", origins?[0]?.GetValue<string>());
         Assert.Equal(300, result["corsOptions"]?["maxAgeInSeconds"]?.GetValue<int>());

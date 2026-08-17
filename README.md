@@ -60,6 +60,10 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `highlightPreTag` - Start tag to wrap highlighted result text, defaults to `<em>`
   * `highlightPostTag` - End tag to wrap highlighted result text, defaults to `</em>`
   * `queryType` - The type of query parser to use, either `simple` (default) or `full`
+  * `scoringProfile` - Name of a scoring profile defined on the index, to tune relevance
+    (see Scoring profiles below)
+  * `scoringParameter` / `scoringParameters` - Values a scoring profile's functions need,
+    in the form `name-value`, i.e. `mylocation--122.2,44.8`
   * `search` - The actual search query text to pass to the query parser
   * `searchFields` - Comma-delimited list of fields to search
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
@@ -101,18 +105,44 @@ suggestions is the same, but the *order* of two equally-matching suggestions may
 that asserts on set membership behaves the same locally; code that asserts on exact ranking may
 not.
 
-### Unsupported search parameters
+### Scoring profiles
 
-The following search parameters are rejected with `501 Not Implemented` rather than accepted
-and ignored:
+Indexes support `scoringProfiles` and `defaultScoringProfile`, and searches support
+`scoringProfile` and `scoringParameter`/`scoringParameters`. Both halves of a profile work:
 
-* `scoringProfile` and `scoringParameter`/`scoringParameters` - custom relevance scoring
-  (tracked by [#47](https://github.com/feature23/AzureSearchEmulator/issues/47))
+* **Field weights** (`text.weights`) multiply how much each searchable field contributes to the
+  text match, so a term found in a weighted field outranks the same term found elsewhere. They
+  apply to both the `simple` and `full` query types.
+* **Scoring functions** boost a document by the value of one of its fields. All four types are
+  supported — `magnitude` over a numeric field, `freshness` over `Edm.DateTimeOffset`,
+  `distance` over `Edm.GeographyPoint`, and `tag` over `Edm.String` or
+  `Collection(Edm.String)` — with all four `interpolation` curves and all six
+  `functionAggregation` modes.
 
-Returning results that quietly differ from Azure's is the worst failure mode for an emulator:
-your code would pass locally and fail against the real service, with nothing in the local run
-pointing at the parameter that was dropped. Failing loudly instead means the gap is visible
-where it is introduced.
+Scoring parameters use Azure's `name-value` format, i.e. `mytags-luxury,budget`. A reference
+point for a `distance` function is longitude-first, so `mylocation--122.2,44.8` is a single
+dash separating the name from a value that begins with a negative longitude.
+
+A profile is validated when the index is created, so a function over a field of the wrong type,
+or a weight on a non-searchable field, is a `400` at definition time rather than a query that
+silently does no boosting. A search naming a profile the index does not define, or omitting a
+scoring parameter one of its functions needs, is likewise refused rather than answered
+unboosted.
+
+Matching Azure, a profile applies to full-text search only. An empty or wildcard search
+(`search=*`) is not ranked — every result comes back with a uniform `@search.score` — and
+suggest and autocomplete are not scored at all.
+
+**The one thing that differs is the score values themselves.** The emulator ranks with Lucene,
+whose relevance implementation is not Azure's, so `@search.score` will not match what the real
+service returns even before a profile is applied. What a profile controls, and what does carry
+over, is the *relative order* of results: boosting recent documents, or nearby ones, or ones
+matching a tag, reorders your results here the same way it does in Azure. Code that asserts on
+result ordering behaves the same locally; code that asserts on exact score values does not.
+
+Azure also documents the interpolation curves only qualitatively and never publishes their
+formulas, so the exact size of an individual boost is an interpretation of that description
+rather than a reproduction of Azure's arithmetic.
 
 ### Replica-dependent parameters
 

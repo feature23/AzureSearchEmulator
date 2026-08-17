@@ -338,6 +338,121 @@ public sealed class LuceneTestHelper : IDisposable
         };
     }
 
+    /// <summary>
+    /// An index carrying one field of every type a scoring function can read, used by the
+    /// scoring profile tests (issue #47).
+    /// </summary>
+    /// <remarks>
+    /// All four functions need a field they can act on: a number for <c>magnitude</c>, a date
+    /// for <c>freshness</c>, a point for <c>distance</c> and a string collection for
+    /// <c>tag</c>. Every one is filterable, which Azure requires of a scoring function's field
+    /// and which the emulator needs in order to write the exact-value copies read at query
+    /// time.
+    /// </remarks>
+    public static SearchIndex CreateScoringIndex()
+    {
+        return new SearchIndex
+        {
+            Name = "scoring",
+            Fields =
+            [
+                new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = true },
+                new SearchField { Name = "Name", Type = "Edm.String", Searchable = true, Filterable = true },
+                new SearchField { Name = "Description", Type = "Edm.String", Searchable = true, Filterable = true },
+                new SearchField { Name = "Rating", Type = "Edm.Double", Filterable = true, Sortable = true },
+                new SearchField { Name = "Updated", Type = "Edm.DateTimeOffset", Filterable = true, Sortable = true },
+                new SearchField { Name = "Location", Type = "Edm.GeographyPoint", Filterable = true },
+                new SearchField { Name = "Tags", Type = "Collection(Edm.String)", Filterable = true },
+            ]
+        };
+    }
+
+    /// <summary>
+    /// Documents for <see cref="CreateScoringIndex"/>, all matching the word "widget" so that a
+    /// single query returns every one and the ordering between them is decided purely by the
+    /// scoring profile under test.
+    /// </summary>
+    /// <remarks>
+    /// The values are spread deliberately: ratings run low to high, dates run old to new, the
+    /// points run near to far from Seattle, and the tags overlap only partly. One document
+    /// leaves every scored field null, so the rule that a function does not apply to a document
+    /// without a value has something to act on.
+    ///
+    /// <paramref name="now"/> anchors the dates relative to the moment the test runs, since a
+    /// freshness function measures against the clock.
+    /// </remarks>
+    public static List<Document> CreateScoringDocuments(DateTimeOffset now)
+    {
+        var index = CreateScoringIndex();
+
+        return
+        [
+            CreateScoringDoc(index, "1", "Widget Basic", 1.0, now.AddDays(-300), (-122.33, 47.60), ["budget"]),
+            CreateScoringDoc(index, "2", "Widget Plus", 3.0, now.AddDays(-100), (-122.20, 47.61), ["budget", "popular"]),
+            CreateScoringDoc(index, "3", "Widget Pro", 5.0, now.AddDays(-1), (-74.00, 40.71), ["premium", "popular"]),
+            CreateScoringDoc(index, "4", "Widget Plain", null, null, null, []),
+        ];
+    }
+
+    /// <summary>
+    /// Builds a document through the real indexing path, so the tests read the same Lucene
+    /// fields a document uploaded over HTTP would produce.
+    /// </summary>
+    private static Document CreateScoringDoc(
+        SearchIndex index,
+        string id,
+        string name,
+        double? rating,
+        DateTimeOffset? updated,
+        (double Lon, double Lat)? location,
+        string[] tags)
+    {
+        var json = new JsonObject
+        {
+            ["Id"] = id,
+            ["Name"] = name,
+            // Shared by every document so one query matches them all.
+            ["Description"] = "a widget for testing",
+        };
+
+        if (rating != null)
+        {
+            json["Rating"] = rating.Value;
+        }
+
+        if (updated != null)
+        {
+            json["Updated"] = updated.Value;
+        }
+
+        if (location != null)
+        {
+            json["Location"] = GeoSupport.CreateGeoJsonPoint(location.Value.Lon, location.Value.Lat);
+        }
+
+        if (tags.Length > 0)
+        {
+            json["Tags"] = new JsonArray(tags.Select(i => (JsonNode)JsonValue.Create(i)!).ToArray());
+        }
+
+        var doc = new Document();
+
+        foreach (var field in index.Fields)
+        {
+            if (json[field.Name] is not { } value)
+            {
+                continue;
+            }
+
+            foreach (var luceneField in field.CreateFields(value))
+            {
+                doc.Add(luceneField);
+            }
+        }
+
+        return doc;
+    }
+
     private static Document CreateProductDoc(string id, string name, string description, double price, string category, bool inStock, int rating)
     {
         var doc = new Document

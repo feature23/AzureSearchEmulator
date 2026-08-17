@@ -55,7 +55,21 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
     {
         var searcher = GetSearcher(index);
 
-        var query = GetQueryFromRequest(index, request);
+        // Resolved before the query is built because a scoring profile shapes both halves of
+        // it — the text weights and the function boosts (issue #47).
+        var profile = ScoringProfileSupport.Resolve(index, request.ScoringProfile);
+        var scoringParameters = ScoringParameterCollection.Parse(request.ScoringParameters);
+
+        if (profile != null
+            && ScoringProfileSupport.GetMissingParameterMessage(profile, scoringParameters) is { } missing)
+        {
+            throw new InvalidOperationException(missing);
+        }
+
+        // Captured once so every document in the response is scored against the same instant;
+        // a freshness function reading the clock per document would rank inconsistently within
+        // a single query.
+        var query = GetQueryFromRequest(index, request, profile, scoringParameters, DateTimeOffset.UtcNow);
 
         // Facet expressions are parsed even when nothing can match, so that an invalid one is
         // still reported as the error it is rather than silently returning no facets.
@@ -577,7 +591,48 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         return new QueryWrapperFilter(query);
     }
 
-    private static Query? GetQueryFromRequest(SearchIndex index, SearchRequest request)
+    /// <summary>
+    /// Builds the query for a request, with the scoring profile's weights applied to the text
+    /// match and its functions applied to the resulting scores (issue #47).
+    /// </summary>
+    /// <remarks>
+    /// A profile reaches the query in two places, because its two halves act at different
+    /// stages: the text weights have to be present while the query is parsed, since they
+    /// weight each field's contribution to the match, whereas the functions adjust the score of
+    /// whatever matched and so wrap the finished query.
+    ///
+    /// Neither half applies to a query that does not rank: see <see cref="IsScored"/>.
+    /// </remarks>
+    private static Query? GetQueryFromRequest(
+        SearchIndex index,
+        SearchRequest request,
+        ScoringProfile? profile,
+        ScoringParameterCollection parameters,
+        DateTimeOffset now)
+    {
+        var query = GetBaseQueryFromRequest(index, request, profile);
+
+        if (query == null || profile == null || !IsScored(request))
+        {
+            return query;
+        }
+
+        return ScoringProfileQuery.Wrap(query, index, profile, parameters, now);
+    }
+
+    /// <summary>
+    /// Whether a request produces ranked results at all.
+    /// </summary>
+    /// <remarks>
+    /// Azure scores full-text search only: an empty or wildcard search returns a uniform
+    /// <c>@search.score</c> of 1, with the filter — not relevance — deciding the result set.
+    /// A scoring profile has nothing to act on there, and applying one anyway would invent a
+    /// ranking the real service does not produce.
+    /// </remarks>
+    private static bool IsScored(SearchRequest request)
+        => request.Search is not (null or "*" or "*:*");
+
+    private static Query? GetBaseQueryFromRequest(SearchIndex index, SearchRequest request, ScoringProfile? profile)
     {
         if (request.Search == null)
         {
@@ -599,12 +654,16 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         return request.QueryType switch
         {
-            "full" => ParseFullQuery(request, firstTextFieldPath, analyzer),
-            _ => ParseSimpleQuery(index, request, analyzer)
+            "full" => ParseFullQuery(index, request, firstTextFieldPath, analyzer, profile),
+            _ => ParseSimpleQuery(index, request, analyzer, profile)
         };
     }
 
-    private static Query? ParseSimpleQuery(SearchIndex index, SearchRequest request, Analyzer analyzer)
+    private static Query? ParseSimpleQuery(
+        SearchIndex index,
+        SearchRequest request,
+        Analyzer analyzer,
+        ScoringProfile? profile)
     {
         if (request.Search == "*" || request.Search == "*:*")
         {
@@ -613,7 +672,8 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var searchFields = GetSearchFields(index, request.SearchFields);
 
-        var weights = new Dictionary<string, float>(searchFields.Select(i => new KeyValuePair<string, float>(i, 1.0f)));
+        // Every searched field weighs 1 unless the profile says otherwise (issue #47).
+        var weights = ScoringProfileSupport.GetWeights(index, profile, searchFields);
 
         var queryParser = new SimpleQueryParser(analyzer, weights)
         {
@@ -623,7 +683,12 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         return queryParser.Parse(request.Search);
     }
 
-    private static Query? ParseFullQuery(SearchRequest request, string? firstTextFieldPath, Analyzer analyzer)
+    private static Query? ParseFullQuery(
+        SearchIndex index,
+        SearchRequest request,
+        string? firstTextFieldPath,
+        Analyzer analyzer,
+        ScoringProfile? profile)
     {
         if (request.Search == "*" || request.Search == "*:*")
         {
@@ -635,7 +700,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             DefaultOperator = GetDefaultOperator(request.SearchMode),
         };
 
-        return queryParser.Parse(request.Search, firstTextFieldPath ?? "Text");
+        var query = queryParser.Parse(request.Search, firstTextFieldPath ?? "Text");
+
+        // The full syntax parser takes no weight map, so a profile's text weights are applied
+        // to the parsed query instead — otherwise they would apply to simple queries only and
+        // be silently dropped here (issue #47).
+        return ScoringProfileSupport.ApplyWeights(
+            index, profile, query, GetSearchFields(index, request.SearchFields));
     }
 
     private static Operator GetDefaultOperator(string? searchMode)
