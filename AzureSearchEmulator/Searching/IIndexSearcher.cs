@@ -5,7 +5,10 @@ namespace AzureSearchEmulator.Searching;
 
 public interface IIndexSearcher
 {
-    Task<JsonObject?> GetDoc(SearchIndex index, string docKey);
+    /// <summary>
+    /// Looks up a single document by key, optionally narrowed to a <c>$select</c> field list.
+    /// </summary>
+    Task<JsonObject?> GetDoc(SearchIndex index, string docKey, string? select = null);
 
     Task<int> GetDocCount(SearchIndex index);
 

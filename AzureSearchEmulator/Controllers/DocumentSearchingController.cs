@@ -34,7 +34,8 @@ public class DocumentSearchingController(
     [HttpGet]
     [Route("indexes/{indexKey}/docs/{key}")]
     [Route("indexes({indexKey})/docs({key})")]
-    public async Task<IActionResult> GetDocument(string indexKey, string key)
+    public async Task<IActionResult> GetDocument(string indexKey, string key,
+        [FromQuery(Name = "$select")] string? select)
     {
         // Strip quotes that may be captured from OData-style URLs
         indexKey = indexKey.Trim('\'');
@@ -47,7 +48,7 @@ public class DocumentSearchingController(
             return NotFound($"The specified index does not exist. Index Key: {indexKey}");
         }
 
-        var doc = await indexSearcher.GetDoc(index, key);
+        var doc = await indexSearcher.GetDoc(index, key, select);
 
         if (doc == null)
         {
