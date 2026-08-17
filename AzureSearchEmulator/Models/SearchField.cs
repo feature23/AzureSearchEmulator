@@ -1,4 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AzureSearchEmulator.Models;
 
@@ -40,4 +42,20 @@ public class SearchField
     /// Sub-fields of an <c>Edm.ComplexType</c> or <c>Collection(Edm.ComplexType)</c> field.
     /// </summary>
     public IList<SearchField> Fields { get; set; } = new List<SearchField>();
+
+    /// <summary>
+    /// Field properties the emulator does not model, kept verbatim so they survive a
+    /// get-modify-put cycle (issue #41).
+    /// </summary>
+    /// <remarks>
+    /// Field-level properties are dropped by the same round-trip that loses the index-level
+    /// ones — <c>dimensions</c>, <c>vectorSearchProfile</c> and <c>normalizer</c> among them.
+    /// Because the attribute applies per type rather than recursively, sub-fields of a complex
+    /// field need it here to be covered too.
+    ///
+    /// Uses the same nullable <see cref="JsonElement"/> dictionary as
+    /// <see cref="SearchIndex.AdditionalProperties"/>, for the reasons given there.
+    /// </remarks>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }

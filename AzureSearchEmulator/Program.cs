@@ -8,6 +8,7 @@ using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OData;
+using Microsoft.AspNetCore.OData.Formatter;
 using Microsoft.Extensions.Options;
 using Microsoft.OData.Edm;
 using Microsoft.OData.ModelBuilder;
@@ -40,6 +41,33 @@ builder.Services.AddControllers()
     .AddOData(options =>
         options.Count().Filter().Expand().Select().OrderBy().SetMaxTop(1000)
             .AddRouteComponents("", model));
+
+// Take request bodies away from OData and give them to System.Text.Json (issue #41).
+//
+// AddOData registers an ODataInputFormatter that claims application/json, and because
+// SearchIndex is an EDM entity type it wins the body of POST/PUT /indexes. That formatter
+// validates against the EDM model and rejects any property the model does not declare, so a
+// definition carrying corsOptions, scoringProfiles, a field-level normalizer, or a
+// similarity with an @odata.type came back as 400 "The input was not valid." It also has no
+// notion of [JsonExtensionData], so it could never populate SearchIndex.AdditionalProperties —
+// preserving unmodelled properties is unimplementable while it handles the body.
+//
+// This is why both actions used to read the body off the stream by hand: bypassing the
+// formatter was the only way to accept a realistic index definition. The cost was that
+// ModelState stayed empty, leaving the [Required] attributes on SearchField unenforced and
+// the !ModelState.IsValid guard dead. Removing the formatter lets [FromBody] bind, which
+// restores validation as well.
+//
+// Only the INPUT formatter goes. ODataOutputFormatter and every query option stay registered,
+// so responses keep their @odata.context envelope and [EnableQuery] is unaffected. The output
+// side needs its own accommodation for the extension data — see GetEdmModel below.
+builder.Services.Configure<MvcOptions>(options =>
+{
+    foreach (var formatter in options.InputFormatters.OfType<ODataInputFormatter>().ToList())
+    {
+        options.InputFormatters.Remove(formatter);
+    }
+});
 
 builder.Services.AddTransient(sp =>
 {
@@ -143,6 +171,18 @@ static IEdmModel GetEdmModel()
 
     var index = builder.EntitySet<SearchIndex>("indexes").EntityType;
     index.HasKey(i => i.Name);
+
+    // Keep the extension-data bags out of the EDM model (issue #41). The convention builder
+    // would otherwise treat them as ordinary structural properties, and ODataOutputFormatter
+    // would serialize each captured property as an empty object under an "additionalProperties"
+    // key — turning corsOptions and scoringProfiles into "additionalProperties": [{}, {}] in the
+    // response while the values sat correctly on disk.
+    //
+    // Ignoring them keeps that corruption out of the collection endpoint, which stays on OData.
+    // It does not make OData emit them: the single-index responses serialize with
+    // System.Text.Json instead — see IndexesController.IndexJson.
+    index.Ignore(i => i.AdditionalProperties);
+    builder.ComplexType<SearchField>().Ignore(i => i.AdditionalProperties);
 
     return builder.GetEdmModel();
 }
