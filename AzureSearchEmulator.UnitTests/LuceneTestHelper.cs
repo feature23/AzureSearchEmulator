@@ -70,6 +70,23 @@ public sealed class LuceneTestHelper : IDisposable
     }
 
     /// <summary>
+    /// The product index with a suggester over Name and Description, used by the suggest and
+    /// autocomplete tests (issue #45).
+    /// </summary>
+    public static SearchIndex CreateSuggesterProductIndex()
+    {
+        var index = CreateProductIndex();
+
+        index.Suggesters.Add(new SearchSuggester
+        {
+            Name = "sg",
+            SourceFields = ["Name", "Description"],
+        });
+
+        return index;
+    }
+
+    /// <summary>
     /// Creates standard product documents for testing.
     /// </summary>
     public static List<Document> CreateProductDocuments()

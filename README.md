@@ -63,8 +63,43 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `search` - The actual search query text to pass to the query parser
   * `searchFields` - Comma-delimited list of fields to search
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
+* Suggestions and autocomplete via `docs/suggest` and `docs/autocomplete` (see Suggesters and
+  autocomplete below)
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
+
+### Suggesters and autocomplete
+
+An index may declare `suggesters`, each naming the searchable fields that typeahead queries
+draw from:
+
+```json
+{
+  "name": "products",
+  "fields": [ ... ],
+  "suggesters": [
+    { "name": "sg", "searchMode": "analyzingInfixMatching", "sourceFields": ["Name", "Description"] }
+  ]
+}
+```
+
+`SearchClient.Suggest` returns one entry per matching document, each carrying its
+`@search.text` alongside the selected document fields, and supports `search`, `suggesterName`,
+`$select`, `$filter`, `$top`, `$orderby`, `fuzzy`, `highlightPreTag`, `highlightPostTag`, and
+`minimumCoverage`. `SearchClient.Autocomplete` returns distinct completions as
+`text`/`queryPlusText` pairs, in all three `autocompleteMode` values — `oneTerm`, `twoTerms`,
+and `oneTermWithContext`. Both are available as `GET` and `POST`.
+
+Search text is split on whitespace and punctuation: every term but the last must match a whole
+word, while the last is the word still being typed and matches as a prefix. `$top` defaults to
+5 and is capped at 100, as in Azure.
+
+The one place this diverges from Azure Search is ranking. Azure builds suggesters from an edge
+n-gram index at index time and ranks suggestions by its own n-gram relevance; the emulator has
+no such side index and matches with a prefix query at query time instead. The set of
+suggestions is the same, but the *order* of two equally-matching suggestions may differ. Code
+that asserts on set membership behaves the same locally; code that asserts on exact ranking may
+not.
 
 ### Unsupported search parameters
 
