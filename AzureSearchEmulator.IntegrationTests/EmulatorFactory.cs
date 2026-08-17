@@ -89,7 +89,33 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
     /// to send payloads the strongly-typed SDK will not construct — such as a batch item
     /// missing its key field.
     /// </summary>
+    /// <remarks>
+    /// This client has no retry policy, unlike the SDK clients. A test whose first contact
+    /// with the container is through this client should call
+    /// <see cref="WaitUntilServingAsync"/> first.
+    /// </remarks>
     public HttpClient CreateHttpClient() => new(CreateHandler()) { BaseAddress = Endpoint };
+
+    /// <summary>
+    /// Blocks until the emulator is actually serving requests.
+    /// </summary>
+    /// <remarks>
+    /// The container's wait strategy only checks that the TCP port accepts connections, which
+    /// happens before Kestrel has finished negotiating TLS. A raw <see cref="HttpClient"/>
+    /// arriving in that window fails the handshake outright with "Received an unexpected EOF
+    /// or 0 bytes from the transport stream" — a client-side transport failure that reads
+    /// like a server fault but is not one.
+    ///
+    /// Most tests never notice, because they reach the emulator through an SDK client whose
+    /// three retries cover the gap. This makes that same tolerance available to the tests
+    /// that start with the raw client, by issuing one retried SDK call and discarding the
+    /// result.
+    /// </remarks>
+    public async Task WaitUntilServingAsync()
+    {
+        // GetServiceStatisticsAsync is the cheapest call that needs no index to exist.
+        await CreateSearchIndexClient().GetServiceStatisticsAsync();
+    }
 
     /// <summary>
     /// Builds the shared HTTP handler for talking to the emulator container.

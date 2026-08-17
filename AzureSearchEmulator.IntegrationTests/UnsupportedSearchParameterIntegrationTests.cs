@@ -253,6 +253,12 @@ public class UnsupportedSearchParameterIntegrationTests(EmulatorFactory factory)
     [Fact]
     public async Task UnsupportedParameter_OnMissingIndex_ReportsTheParameter()
     {
+        // The raw HttpClient has no retry, unlike the SDK clients, so it cannot absorb the
+        // connection failures that happen while the container's TLS listener is still coming
+        // up — the wait strategy only checks that the port is open. Going through the SDK
+        // first blocks until the emulator is genuinely serving.
+        await factory.WaitUntilServingAsync();
+
         using var httpClient = factory.CreateHttpClient();
 
         var response = await httpClient.PostAsJsonAsync(
