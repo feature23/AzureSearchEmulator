@@ -123,6 +123,30 @@ normally written with a lambda, i.e.
 Collections cannot be sorted, so `$orderby` still requires a single `Edm.GeographyPoint`
 field.
 
+### Filter semantics
+
+Null comparison, lexicographic string ranges, and the two full-text filter functions behave
+as they do in Azure Search:
+
+```
+$filter=Description eq null                # the field has no value
+$filter=Description ne null                # the field has some value
+$filter=Name ge 'M' and Name lt 'S'        # lexicographic string range
+$filter=search.ismatch('luxury')           # matches, without affecting relevance
+$filter=search.ismatchscoring('luxury')    # matches, and contributes to the score
+```
+
+A field is null when the document omits it, sends it as JSON `null`, or — for a collection —
+supplies an empty array. A complex field is null when every one of its sub-fields is.
+
+String ranges compare **ordinally**, by UTF-8 byte sequence, so every uppercase letter sorts
+before every lowercase one and `'Z' lt 'a'` holds. The comparison uses the field's exact
+stored value, so an analyzed searchable field still ranges over what the document actually
+contains rather than over its lowercased search tokens.
+
+`search.ismatch` filters without contributing to relevance, while `search.ismatchscoring`
+selects the same documents and feeds their full-text scores into the ranking.
+
 ### Complex type support
 
 Fields of type `Edm.ComplexType` and `Collection(Edm.ComplexType)` can be indexed, filtered,

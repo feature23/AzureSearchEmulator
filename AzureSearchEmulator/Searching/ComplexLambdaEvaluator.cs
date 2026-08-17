@@ -518,15 +518,18 @@ public static class ComplexLambdaEvaluator
         /// Compares an element's value against a literal.
         /// </summary>
         /// <remarks>
-        /// A null or absent value fails every comparison, including <c>ne</c>, matching how
-        /// Azure Search treats nulls in filters. Numbers are compared as doubles so that a
-        /// literal written as an integer still matches an <c>Edm.Double</c> sub-field.
+        /// A null or absent value fails every comparison against a literal value, including
+        /// <c>ne</c>, matching how Azure Search treats nulls in filters. It satisfies only
+        /// <c>eq null</c>, which is the one comparison that asks about absence itself.
+        /// Numbers are compared as doubles so that a literal written as an integer still
+        /// matches an <c>Edm.Double</c> sub-field.
         /// </remarks>
         private static bool Compare(JsonNode? actual, object? expected, BinaryOperatorKind operatorKind)
         {
             if (actual is not JsonValue value)
             {
-                return false;
+                // An absent sub-field, or one explicitly written as JSON null, is null.
+                return expected is null && operatorKind == BinaryOperatorKind.Equal;
             }
 
             if (expected is string expectedString)
@@ -536,13 +539,11 @@ public static class ComplexLambdaEvaluator
                     return false;
                 }
 
-                return operatorKind switch
-                {
-                    BinaryOperatorKind.Equal => string.Equals(actualString, expectedString, StringComparison.Ordinal),
-                    BinaryOperatorKind.NotEqual => !string.Equals(actualString, expectedString, StringComparison.Ordinal),
-                    _ => throw new InvalidOperationException(
-                        $"Operator {operatorKind} is not supported for string comparisons.")
-                };
+                // Ordinal ordering, matching the byte-wise term ordering the flattened
+                // Lucene path uses for string ranges, so both paths agree on 'Z' < 'a'.
+                return Satisfies(
+                    string.CompareOrdinal(actualString, expectedString),
+                    operatorKind);
             }
 
             if (expected is bool expectedBool)

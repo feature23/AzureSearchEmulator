@@ -232,7 +232,28 @@ public static class SearchFieldExtensions
         {
             yield return new StringField(path, str, stored);
         }
+
+        if (filterable)
+        {
+            yield return new StringField(GetRawStringFieldName(path), str, Field.Store.NO);
+        }
     }
+
+    /// <summary>
+    /// Name of the sidecar field holding a string's exact value, with no analysis applied.
+    /// </summary>
+    /// <remarks>
+    /// A searchable field's analyzed and raw copies share the field's own name, which is
+    /// enough for equality — a <c>TermQuery</c> asks for one exact term — but not for a range,
+    /// which scans every term between its bounds and cannot tell an analyzed token from a raw
+    /// value. "Alpha" lowercases to the analyzed term "alpha", which sorts after "Charlie" in
+    /// Lucene's byte-wise term ordering, so <c>Name ge 'Charlie'</c> would match it.
+    ///
+    /// Writing the raw value once more under a name the analyzer never touches gives string
+    /// ranges a field where every term is a real field value. It costs one extra term per
+    /// value, and only for filterable string fields.
+    /// </remarks>
+    public static string GetRawStringFieldName(string path) => "__azs_raw__" + path;
 
     private static IIndexableField CreateScalarField(string type, JsonNode value, Field.Store stored, string path)
     {

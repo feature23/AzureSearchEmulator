@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
 using AzureSearchEmulator.Searching;
@@ -80,6 +82,122 @@ public sealed class LuceneTestHelper : IDisposable
             CreateProductDoc("4", "Mechanical Keyboard", "Mechanical keyboard with Cherry MX switches and RGB lighting", 149.99, "Accessories", false, 5),
             CreateProductDoc("5", "Monitor 4K", "27-inch 4K monitor with 60Hz refresh rate", 599.99, "Electronics", true, 3),
         ];
+    }
+
+    /// <summary>
+    /// Creates an index used by the filter-gap tests (issue #44), whose documents leave
+    /// fields unpopulated so that null comparisons have something to find.
+    /// </summary>
+    /// <remarks>
+    /// This deliberately covers one field of each shape a presence test has to handle
+    /// differently: a plain string, a searchable string (which is indexed twice, analyzed and
+    /// raw), a numeric, a geography point (indexed only under its coordinate sidecars), a
+    /// collection, and a complex type (which indexes nothing under its own name at all).
+    /// </remarks>
+    public static SearchIndex CreateNullableIndex()
+    {
+        return new SearchIndex
+        {
+            Name = "nullable",
+            Fields =
+            [
+                new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = true },
+                new SearchField { Name = "Name", Type = "Edm.String", Searchable = true, Filterable = true, Sortable = true },
+                new SearchField { Name = "Category", Type = "Edm.String", Searchable = false, Filterable = true },
+                new SearchField { Name = "Rating", Type = "Edm.Int32", Searchable = false, Filterable = true },
+                new SearchField { Name = "Location", Type = "Edm.GeographyPoint", Searchable = false, Filterable = true },
+                new SearchField { Name = "Tags", Type = "Collection(Edm.String)", Searchable = false, Filterable = true },
+                new SearchField
+                {
+                    Name = "Address",
+                    Type = "Edm.ComplexType",
+                    Fields =
+                    [
+                        new SearchField { Name = "City", Type = "Edm.String", Searchable = false, Filterable = true },
+                        new SearchField { Name = "PostalCode", Type = "Edm.String", Searchable = false, Filterable = true },
+                    ]
+                },
+            ]
+        };
+    }
+
+    /// <summary>
+    /// Documents for <see cref="CreateNullableIndex"/>, built through the real indexing path
+    /// so that "null" means exactly what the indexer writes for an absent JSON property.
+    /// </summary>
+    public static List<Document> CreateNullableDocuments()
+    {
+        return
+        [
+            // Every field populated.
+            CreateNullableDoc("""
+                {
+                  "Id": "1", "Name": "Alpha", "Category": "Electronics", "Rating": 5,
+                  "Location": { "type": "Point", "coordinates": [-122.3321, 47.6062] },
+                  "Tags": ["red", "blue"],
+                  "Address": { "City": "Seattle", "PostalCode": "98101" }
+                }
+                """),
+            // Category and Rating absent.
+            CreateNullableDoc("""
+                {
+                  "Id": "2", "Name": "Bravo",
+                  "Location": { "type": "Point", "coordinates": [-122.2015, 47.6101] },
+                  "Tags": ["green"],
+                  "Address": { "City": "Bellevue", "PostalCode": "98004" }
+                }
+                """),
+            // Explicit JSON nulls, which the indexer drops exactly as it drops absent keys.
+            CreateNullableDoc("""
+                {
+                  "Id": "3", "Name": "Charlie", "Category": null, "Rating": null,
+                  "Location": null, "Tags": null, "Address": null
+                }
+                """),
+            // Location and Tags absent, the rest present.
+            CreateNullableDoc("""
+                {
+                  "Id": "4", "Name": "delta", "Category": "Accessories", "Rating": 3,
+                  "Address": { "City": "Tacoma", "PostalCode": "98402" }
+                }
+                """),
+            // A complex object present but with every sub-field null, which Azure Search
+            // reports as a null complex field.
+            CreateNullableDoc("""
+                {
+                  "Id": "5", "Name": "Echo", "Category": "Electronics", "Rating": 4,
+                  "Tags": [],
+                  "Address": { "City": null, "PostalCode": null }
+                }
+                """),
+        ];
+    }
+
+    private static Document CreateNullableDoc(string json)
+    {
+        var index = CreateNullableIndex();
+        var item = JsonNode.Parse(json)!.AsObject();
+        var doc = new Document();
+
+        foreach (var field in index.Fields)
+        {
+            var value = item.FirstOrDefault(p =>
+                string.Equals(p.Key, field.Name, StringComparison.OrdinalIgnoreCase)).Value;
+
+            if (value is null)
+            {
+                // Matches GetDocFields, which joins on the item's keys and drops null values,
+                // so an absent field and an explicit null are indistinguishable in the index.
+                continue;
+            }
+
+            foreach (var indexField in field.CreateFields(value))
+            {
+                doc.Add(indexField);
+            }
+        }
+
+        return doc;
     }
 
     /// <summary>
