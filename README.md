@@ -124,8 +124,9 @@ point for a `distance` function is longitude-first, so `mylocation--122.2,44.8` 
 dash separating the name from a value that begins with a negative longitude.
 
 A profile is validated when the index is created, so a function over a field of the wrong type,
-or a weight on a non-searchable field, is a `400` at definition time rather than a query that
-silently does no boosting. A search naming a profile the index does not define, or omitting a
+a weight on a non-searchable field, or a `boost` outside the range Azure defines (greater than
+1, and here capped at 1,000,000 so a score cannot overflow) is a `400` at definition time
+rather than a query that silently does no boosting. A search naming a profile the index does not define, or omitting a
 scoring parameter one of its functions needs, is likewise refused rather than answered
 unboosted.
 

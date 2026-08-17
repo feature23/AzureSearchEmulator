@@ -128,11 +128,19 @@ public static class ScoringFunctionEvaluator
     /// <remarks>
     /// The range may run downward — <c>boostingRangeStart</c> above <c>boostingRangeEnd</c> —
     /// which is how Azure documents boosting cheaper items over dearer ones. Normalizing by the
-    /// signed span handles both directions without a special case.
+    /// signed span handles both directions without a special case: <c>t</c> is 0 at the start of
+    /// the range whichever way it runs, and 1 at its end.
     ///
-    /// Returns null when the function does not apply to this value, which is the case below the
-    /// start of the range, and above its end unless <c>constantBoostBeyondRange</c> asks for the
-    /// boost to be held.
+    /// <para>The two ends are not symmetric, and which is which follows the range's direction
+    /// rather than the numbers. Past the <em>start</em> is past the strongest end — a rating of
+    /// 10 under a range of 5 down to 0, or a price of 50 under a range of 100 up to 200 — and
+    /// such a document is more of what the function rewards, not less, so it keeps the full
+    /// boost. That is also what <c>constantBoostBeyondRange</c> asks for at the other end:
+    /// documents past the weak end stop decaying and hold the boost they had there instead of
+    /// dropping out.</para>
+    ///
+    /// <para>Returns null only past the weak end with the flag off, which is the one case where
+    /// the function genuinely has nothing to say about a document.</para>
     /// </remarks>
     public static double? GetMagnitudeBoost(MagnitudeScoringFunction function, double value)
     {
@@ -154,8 +162,10 @@ public static class ScoringFunctionEvaluator
 
         if (t < 0)
         {
-            // Short of the start of the range: outside the function's reach entirely.
-            return null;
+            // Beyond the strong end of the range: the full boost, since the value is further in
+            // the direction the function rewards. Returning nothing here would rank the very
+            // documents the profile most wants promoted below the mid-range ones.
+            return Interpolate(function.Boost, 0, function.Interpolation);
         }
 
         if (t > 1)

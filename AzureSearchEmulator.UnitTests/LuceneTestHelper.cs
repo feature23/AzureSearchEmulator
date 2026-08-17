@@ -363,6 +363,11 @@ public sealed class LuceneTestHelper : IDisposable
                 new SearchField { Name = "Updated", Type = "Edm.DateTimeOffset", Filterable = true, Sortable = true },
                 new SearchField { Name = "Location", Type = "Edm.GeographyPoint", Filterable = true },
                 new SearchField { Name = "Tags", Type = "Collection(Edm.String)", Filterable = true },
+                // Numeric collections, which a magnitude function may target: the validator
+                // accepts them by their element type, so the query side has to read them by it
+                // too.
+                new SearchField { Name = "Sizes", Type = "Collection(Edm.Int32)", Filterable = true },
+                new SearchField { Name = "Counts", Type = "Collection(Edm.Int64)", Filterable = true },
             ]
         };
     }
@@ -395,6 +400,50 @@ public sealed class LuceneTestHelper : IDisposable
     }
 
     /// <summary>
+    /// Documents whose <c>Sizes</c> collection holds its largest value in different positions,
+    /// so a test can tell "scored by the largest value" from "scored by the first one written".
+    /// </summary>
+    public static List<Document> CreateCollectionScoringDocuments()
+    {
+        var index = CreateScoringIndex();
+
+        return
+        [
+            CreateCollectionScoringDoc(index, "high-first", [5, 1]),
+            CreateCollectionScoringDoc(index, "high-last", [1, 5]),
+            CreateCollectionScoringDoc(index, "low", [1, 2]),
+        ];
+    }
+
+    private static Document CreateCollectionScoringDoc(SearchIndex index, string id, int[] sizes)
+    {
+        var json = new JsonObject
+        {
+            ["Id"] = id,
+            ["Name"] = "Widget " + id,
+            ["Description"] = "a widget for testing",
+            ["Sizes"] = new JsonArray(sizes.Select(i => (JsonNode)JsonValue.Create(i)).ToArray()),
+        };
+
+        var doc = new Document();
+
+        foreach (var field in index.Fields)
+        {
+            if (json[field.Name] is not { } value)
+            {
+                continue;
+            }
+
+            foreach (var luceneField in field.CreateFields(value))
+            {
+                doc.Add(luceneField);
+            }
+        }
+
+        return doc;
+    }
+
+    /// <summary>
     /// Builds a document through the real indexing path, so the tests read the same Lucene
     /// fields a document uploaded over HTTP would produce.
     /// </summary>
@@ -417,6 +466,11 @@ public sealed class LuceneTestHelper : IDisposable
 
         if (rating != null)
         {
+            // Mirrored into the numeric collections so a magnitude function over one of them
+            // ranks the documents exactly as the scalar field does.
+            json["Sizes"] = new JsonArray((int)rating.Value);
+            json["Counts"] = new JsonArray((long)rating.Value);
+
             json["Rating"] = rating.Value;
         }
 

@@ -136,23 +136,41 @@ public class ScoringProfileQuery : CustomScoreQuery
     /// document.
     /// </summary>
     /// <remarks>
-    /// The field cache exposes the value as a double regardless of the underlying numeric type,
-    /// which is what the magnitude and freshness curves want. Documents with no value report
-    /// <see cref="double.NaN"/> so the caller can tell them from a genuine zero.
+    /// Documents with no value report <see cref="double.NaN"/> so the caller can tell them from
+    /// a genuine zero.
+    ///
+    /// <para>The type read is the field's <em>element</em> type, so that a numeric collection is
+    /// read the same way the scalar of that type is. Matching on the field type verbatim would
+    /// leave <c>Collection(Edm.Int32)</c> matching neither the int nor the long branch and
+    /// falling through to the double reader, which is not a harmless mismatch: the field cache
+    /// is typed, and reading 32-bit prefix-coded terms as doubles throws, while reading 64-bit
+    /// ones succeeds and returns a denormal far below any sane boosting range, so the function
+    /// silently never fires. The validator already accepts these fields by their element type,
+    /// so both sides have to agree on what the type means.</para>
+    ///
+    /// <para>A numeric collection is scored by its largest value. The field cache exposes one
+    /// value per document, and for a multi-valued field that is the last term in term order,
+    /// which is the maximum regardless of the order the values were written in. Azure documents
+    /// nothing about magnitude over a collection, and the largest value is the reading that
+    /// matches what such a function is normally asked for — promote the document that reaches
+    /// furthest — as well as the nearest-point rule <see cref="ReadDistance"/> uses for a
+    /// collection of points.</para>
     /// </remarks>
     private static Func<int, double> ReadNumeric(AtomicReader reader, string path, SearchField field)
     {
         var hasValue = FieldCache.DEFAULT.GetDocsWithField(reader, path);
 
-        // The field cache is typed, and asking for the wrong width returns nothing rather than
-        // converting, so each indexed type is read as itself.
-        if (field.Type == "Edm.Int32")
+        var type = field.IsCollection()
+            ? SearchFieldExtensions.GetCollectionElementType(field.Type)
+            : field.Type;
+
+        if (type == "Edm.Int32")
         {
             var values = FieldCache.DEFAULT.GetInt32s(reader, path, false);
             return doc => hasValue.Get(doc) ? values.Get(doc) : double.NaN;
         }
 
-        if (field.Type is "Edm.Int64" or "Edm.DateTimeOffset")
+        if (type is "Edm.Int64" or "Edm.DateTimeOffset")
         {
             var values = FieldCache.DEFAULT.GetInt64s(reader, path, false);
             return doc => hasValue.Get(doc) ? values.Get(doc) : double.NaN;
@@ -248,6 +266,34 @@ public class ScoringProfileQuery : CustomScoreQuery
         => new Provider(context, _profile, _functions);
 
     /// <summary>
+    /// Two scoring queries are the same query only when they apply the same profile through the
+    /// same bound functions.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CustomScoreQuery"/> compares only its type, boost and sub-query, none of which
+    /// change with the scoring parameters — so without this, a search for the same text with a
+    /// different reference point or a different tag list compares equal to the previous one.
+    /// Nothing in the emulator caches queries today, which is why this is not a live defect, but
+    /// the failure mode if anything ever does is one search silently returning another's scores.
+    /// Identity is cheap to state correctly and expensive to debug once it is wrong.
+    ///
+    /// The functions are compared by reference because they are prepared per request and closed
+    /// over the parameters they were built with; two separately prepared sets are never
+    /// interchangeable even when their profiles match.
+    /// </remarks>
+    public override bool Equals(object? obj)
+        => obj is ScoringProfileQuery other
+           && base.Equals(obj)
+           && ReferenceEquals(_profile, other._profile)
+           && _functions.SequenceEqual(other._functions);
+
+    public override int GetHashCode()
+        => HashCode.Combine(base.GetHashCode(), _profile.Name, _functions.Count);
+
+    public override string ToString(string field)
+        => $"scoringProfile({_profile.Name}, {base.ToString(field)})";
+
+    /// <summary>
     /// A function bound to one field, with the readers and curve needed to score a document.
     /// </summary>
     /// <param name="Path">The indexed path of the field the function reads.</param>
@@ -306,7 +352,16 @@ public class ScoringProfileQuery : CustomScoreQuery
 
             var aggregate = ScoringFunctionEvaluator.Aggregate(boosts, _profile.FunctionAggregation);
 
-            return (float)(subQueryScore * aggregate);
+            var score = (float)(subQueryScore * aggregate);
+
+            // Individual boosts are bounded when the index is defined, which is where an
+            // unreasonable one should be refused. This is the backstop for what validation
+            // cannot bound: Azure sets no limit on how many functions a profile may declare, and
+            // a long enough product of large boosts still reaches infinity. An infinite score
+            // would leave every document mutually unorderable and serialize as a value that is
+            // not legal JSON, so the score is held at the largest finite float instead — which
+            // preserves the ordering against everything below it.
+            return float.IsFinite(score) ? score : float.MaxValue;
         }
     }
 }

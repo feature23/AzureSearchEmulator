@@ -27,6 +27,17 @@ public static class ScoringProfileValidator
         new(StringComparer.Ordinal) { "Edm.Int32", "Edm.Int64", "Edm.Double" };
 
     /// <summary>
+    /// The largest boost a function may declare.
+    /// </summary>
+    /// <remarks>
+    /// Azure documents no ceiling, so this is the emulator's own. It is set well above any
+    /// useful relevance tuning — a boost of a thousand already swamps every text score — while
+    /// staying far enough below <see cref="float.MaxValue"/> that even the product of a
+    /// profile's full complement of functions cannot overflow the float a score is returned as.
+    /// </remarks>
+    public const double MaxBoost = 1_000_000;
+
+    /// <summary>
     /// Returns a message describing the first invalid profile, or null when every profile is
     /// usable against these fields.
     /// </summary>
@@ -113,10 +124,19 @@ public static class ScoringProfileValidator
                    $"'{function.FieldName}', which does not exist in the index.";
         }
 
-        if (function.Boost <= 0 || !double.IsFinite(function.Boost))
+        // Azure defines boost as "a positive number not equal to 1.0", and both bounds matter
+        // here. A boost below 1 inverts every curve — the multiplier would then climb from the
+        // near end of the range toward 1 at the far end, demoting the documents the function
+        // exists to promote, and constantBoostBeyondRange would hold that demotion past the
+        // range. An unbounded one overflows: the boosts are aggregated as doubles and the score
+        // is a float, so a large enough boost — or a product of several — reaches infinity,
+        // which leaves every document mutually unorderable and serializes as a value that is
+        // not legal JSON.
+        if (!double.IsFinite(function.Boost) || function.Boost <= 1 || function.Boost > MaxBoost)
         {
             return $"Scoring profile '{profile.Name}' has a {function.Type} function over field " +
-                   $"'{function.FieldName}' with a boost of {function.Boost}, which must be a positive number.";
+                   $"'{function.FieldName}' with a boost of {function.Boost}, which must be greater " +
+                   $"than 1 and no more than {MaxBoost}.";
         }
 
         // Azure requires every function's field to be filterable, and the emulator needs it for

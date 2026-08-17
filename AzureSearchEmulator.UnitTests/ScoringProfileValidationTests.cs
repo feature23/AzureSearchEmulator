@@ -143,6 +143,41 @@ public class ScoringProfileValidationTests
     }
 
     /// <summary>
+    /// Azure defines boost as "a positive number not equal to 1.0", and both bounds matter: a
+    /// boost below 1 would invert the curve and demote the documents the function exists to
+    /// promote, and an unbounded one overflows the float a score is returned as, leaving every
+    /// document unorderable and the score not legal JSON.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-2)]
+    [InlineData(0.5)]
+    [InlineData(1)]
+    [InlineData(double.MaxValue / 2)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NaN)]
+    public void FunctionWithOutOfRangeBoost_IsRejected(double boost)
+    {
+        var function = CreateFunction("magnitude", "Rating");
+        function.Boost = boost;
+
+        var index = WithProfile(new ScoringProfile { Name = "boost", Functions = [function] });
+
+        Assert.Contains("boost", ScoringProfileValidator.FindInvalidProfile(index));
+    }
+
+    [Fact]
+    public void FunctionWithBoostJustAboveOne_IsAccepted()
+    {
+        var function = CreateFunction("magnitude", "Rating");
+        function.Boost = 1.01;
+
+        var index = WithProfile(new ScoringProfile { Name = "boost", Functions = [function] });
+
+        Assert.Null(ScoringProfileValidator.FindInvalidProfile(index));
+    }
+
+    /// <summary>
     /// A range of zero width leaves nothing to interpolate across.
     /// </summary>
     [Fact]

@@ -115,24 +115,43 @@ public class ScoringProfileTests
         Assert.True(cheap < dear, "a reversed range should boost the low end least");
     }
 
+    /// <summary>
+    /// Past the weak end the function has nothing to say, unless the constant-boost flag asks
+    /// it to hold.
+    /// </summary>
     [Fact]
-    public void Magnitude_OutsideTheRange_DoesNotApply()
+    public void Magnitude_PastTheWeakEnd_DoesNotApply()
     {
-        var function = Magnitude(10, 100, boost: 3);
-
-        // Short of the start, and past the end without the constant-boost flag.
-        Assert.Null(ScoringFunctionEvaluator.GetMagnitudeBoost(function, 5));
-        Assert.Null(ScoringFunctionEvaluator.GetMagnitudeBoost(function, 500));
+        Assert.Null(ScoringFunctionEvaluator.GetMagnitudeBoost(Magnitude(10, 100, boost: 3), 500));
     }
 
+    /// <summary>
+    /// Past the strong end is more of what the function rewards, so the full boost is kept.
+    /// Dropping such a document would rank the very ones a profile most wants promoted below
+    /// the mid-range ones.
+    /// </summary>
     [Fact]
-    public void Magnitude_ConstantBoostBeyondRange_KeepsTheEndBoost()
+    public void Magnitude_PastTheStrongEnd_KeepsTheFullBoost()
     {
-        var function = Magnitude(10, 100, boost: 3);
+        // Ascending: the strong end is the low one.
+        Assert.Equal(3.0, ScoringFunctionEvaluator.GetMagnitudeBoost(Magnitude(10, 100, boost: 3), 5)!.Value, 5);
+
+        // Descending: the strong end is the high one, so a rating above the top of the band
+        // still gets everything.
+        Assert.Equal(3.0, ScoringFunctionEvaluator.GetMagnitudeBoost(Magnitude(5, 0, boost: 3), 10)!.Value, 5);
+    }
+
+    [Theory]
+    // Both directions, since which end the flag refers to follows the range's direction.
+    [InlineData(10, 100, 500)]
+    [InlineData(100, 10, 5)]
+    public void Magnitude_ConstantBoostBeyondRange_KeepsTheEndBoost(double start, double end, double beyondEnd)
+    {
+        var function = Magnitude(start, end, boost: 3);
         function.Magnitude!.ConstantBoostBeyondRange = true;
 
-        var beyond = ScoringFunctionEvaluator.GetMagnitudeBoost(function, 500);
-        var atEnd = ScoringFunctionEvaluator.GetMagnitudeBoost(function, 100);
+        var beyond = ScoringFunctionEvaluator.GetMagnitudeBoost(function, beyondEnd);
+        var atEnd = ScoringFunctionEvaluator.GetMagnitudeBoost(function, end);
 
         Assert.Equal(atEnd!.Value, beyond!.Value, 5);
     }

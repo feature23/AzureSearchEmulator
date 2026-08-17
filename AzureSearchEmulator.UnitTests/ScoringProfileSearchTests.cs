@@ -52,6 +52,76 @@ public class ScoringProfileSearchTests : IDisposable
         Assert.Equal(["3", "2", "1"], ids.Take(3));
     }
 
+    /// <summary>
+    /// A magnitude function may target a numeric collection, which the validator accepts by its
+    /// element type. The query side has to read it by the element type too: reading
+    /// <c>Collection(Edm.Int32)</c> as though the field were a double throws, and reading
+    /// <c>Collection(Edm.Int64)</c> that way silently returns a denormal that boosts nothing.
+    /// </summary>
+    [Theory]
+    [InlineData("Sizes")]
+    [InlineData("Counts")]
+    public async Task Magnitude_ReadsNumericCollections(string fieldName)
+    {
+        var index = WithProfile(new MagnitudeScoringFunction
+        {
+            FieldName = fieldName,
+            Boost = 10,
+            Magnitude = new MagnitudeScoringParameters { BoostingRangeStart = 5, BoostingRangeEnd = 0 },
+        });
+
+        var ids = await SearchIdsAsync(index, "widget", "boost");
+
+        Assert.Equal(["3", "2", "1"], ids.Take(3));
+    }
+
+    /// <summary>
+    /// A numeric collection is scored by its largest value, whatever order the values were
+    /// written in.
+    /// </summary>
+    /// <remarks>
+    /// Documents 1, 2 and 3 hold ratings 1, 3 and 5, mirrored into <c>Sizes</c>. Adding a low
+    /// value to the document with the highest one must not pull it down, and adding a high value
+    /// to the lowest must pull it up — which is what distinguishes "largest" from "first
+    /// written".
+    /// </remarks>
+    [Fact]
+    public async Task Magnitude_OverACollection_ScoresByTheLargestValue()
+    {
+        var index = LuceneTestHelper.CreateScoringIndex();
+
+        index.ScoringProfiles.Add(new ScoringProfile
+        {
+            Name = "boost",
+            Functions =
+            [
+                new MagnitudeScoringFunction
+                {
+                    FieldName = "Sizes",
+                    Boost = 10,
+                    Magnitude = new MagnitudeScoringParameters { BoostingRangeStart = 5, BoostingRangeEnd = 0 },
+                }
+            ],
+        });
+
+        using var helper = new LuceneTestHelper(index, LuceneTestHelper.CreateCollectionScoringDocuments());
+        var searcher = new LuceneNetIndexSearcher(new StubReaderFactory(helper.Directory));
+
+        var response = await searcher.Search(index, new SearchRequest
+        {
+            Search = "widget",
+            ScoringProfile = "boost",
+            Top = 50,
+        });
+
+        var ids = response.Results.Select(i => i!["Id"]!.GetValue<string>()).ToList();
+
+        // "high-first" holds [5,1] and "high-last" holds [1,5]; both are scored by the 5 and
+        // outrank "low" at [1,2].
+        Assert.Equal(["high-first", "high-last"], ids.Take(2).Order());
+        Assert.Equal("low", ids[^1]);
+    }
+
     [Fact]
     public async Task Freshness_RanksRecentDocumentsFirst()
     {

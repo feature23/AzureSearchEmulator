@@ -96,6 +96,39 @@ public class ScoringProfileIntegrationTests(EmulatorFactory factory)
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
+    /// <summary>
+    /// A magnitude function over a numeric collection, which the index definition accepts by the
+    /// field's element type and so must also be readable by it at query time.
+    /// </summary>
+    /// <remarks>
+    /// Run over the wire because the failure this covers was an unhandled exception rather than
+    /// a wrong result: reading a <c>Collection(Edm.Int32)</c> as though it were a double throws,
+    /// and the search endpoint turns anything that is not an <c>InvalidOperationException</c>
+    /// into a 500. A test that stopped at the searcher would see the exception but not the
+    /// status code a caller actually gets.
+    /// </remarks>
+    [Fact]
+    public async Task Magnitude_OverANumericCollection_IsAnswered()
+    {
+        const string indexName = "test-scoring-numeric-collection";
+
+        var profile = new ScoringProfile("boost")
+        {
+            Functions =
+            {
+                new MagnitudeScoringFunction("Sizes", 10, new MagnitudeScoringParameters(5, 0)),
+            },
+        };
+
+        var (indexClient, searchClient) = await SetUpAsync(indexName, profile);
+
+        var ids = await SearchIdsAsync(searchClient, "widget", new SearchOptions { ScoringProfile = "boost" });
+
+        Assert.Equal(["3", "2", "1"], ids.Take(3));
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task Freshness_RanksRecentDocumentsFirst()
     {
@@ -396,6 +429,10 @@ public class ScoringProfileIntegrationTests(EmulatorFactory factory)
                 new SimpleField("Updated", SearchFieldDataType.DateTimeOffset) { IsFilterable = true },
                 new SimpleField("Location", SearchFieldDataType.GeographyPoint) { IsFilterable = true },
                 new SearchableField("Tags", collection: true) { IsFilterable = true },
+                new SimpleField("Sizes", SearchFieldDataType.Collection(SearchFieldDataType.Int32))
+                {
+                    IsFilterable = true,
+                },
             ],
             DefaultScoringProfile = defaultProfile,
         };
@@ -418,19 +455,19 @@ public class ScoringProfileIntegrationTests(EmulatorFactory factory)
             new ScoredProduct
             {
                 Id = "1", Name = "Widget Basic", Description = "a widget for testing",
-                Rating = 1, Updated = now.AddDays(-300),
+                Rating = 1, Sizes = [1], Updated = now.AddDays(-300),
                 Location = new GeoPoint(-122.33, 47.60), Tags = ["budget"],
             },
             new ScoredProduct
             {
                 Id = "2", Name = "Widget Plus", Description = "a widget for testing",
-                Rating = 3, Updated = now.AddDays(-100),
+                Rating = 3, Sizes = [3], Updated = now.AddDays(-100),
                 Location = new GeoPoint(-122.20, 47.61), Tags = ["budget", "popular"],
             },
             new ScoredProduct
             {
                 Id = "3", Name = "Widget Pro", Description = "a widget for testing",
-                Rating = 5, Updated = now.AddDays(-1),
+                Rating = 5, Sizes = [5], Updated = now.AddDays(-1),
                 Location = new GeoPoint(-74.00, 40.71), Tags = ["premium", "popular"],
             },
             // Every scored field left null, so the rule that a function does not apply to a

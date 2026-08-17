@@ -85,6 +85,12 @@ public class ScoredProduct
     public GeoPoint? Location { get; init; }
 
     public string[] Tags { get; init; } = [];
+
+    /// <summary>
+    /// Mirrors <see cref="Rating"/>, so a magnitude function over a numeric collection can be
+    /// checked to rank the same way one over the scalar does.
+    /// </summary>
+    public int[] Sizes { get; init; } = [];
 }
 
 /// <summary>
