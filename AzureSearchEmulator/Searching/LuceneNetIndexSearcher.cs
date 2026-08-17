@@ -144,6 +144,171 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         return Task.FromResult(response);
     }
 
+    public Task<SuggestResponse> Suggest(SearchIndex index, SuggestRequest request)
+    {
+        var sourceFields = SuggesterSupport.ResolveSourceFields(index, request.SuggesterName, request.SearchFields);
+
+        var terms = SuggesterSupport.Tokenize(request.Search);
+
+        var response = new SuggestResponse { Coverage = GetSuggesterCoverage(request.MinimumCoverage) };
+
+        var query = SuggesterSupport.BuildQuery(request.Search, sourceFields, request.Fuzzy);
+
+        if (query == null)
+        {
+            return Task.FromResult(response);
+        }
+
+        var searcher = GetSearcher(index);
+
+        // Reuses the search path's $filter and $orderby handling so a suggestion is narrowed
+        // and ordered exactly as a search result would be.
+        var filter = GetFilterFromRequest(new SearchRequest { Filter = request.Filter }, index);
+        var sort = GetSortFromRequest(index, new SearchRequest { Orderby = request.Orderby });
+
+        var selection = FieldSelection.Parse(index, request.Select);
+
+        // Over-fetched because documents whose stored text does not actually contain the terms
+        // are dropped below, and dropping them after a $top-sized fetch would return fewer
+        // suggestions than the caller asked for while more were available.
+        var hitsWanted = Math.Min(request.Top * 4, SuggesterSupport.MaxTop * 4);
+
+        var docs = searcher.Search(query, filter, hitsWanted, sort, true, true);
+
+        foreach (var scoreDoc in docs.ScoreDocs)
+        {
+            if (response.Results.Count >= request.Top)
+            {
+                break;
+            }
+
+            var doc = searcher.Doc(scoreDoc.Doc);
+
+            var text = SuggestionTextBuilder.GetSuggestionText(sourceFields, doc.Get, terms, request.Fuzzy);
+
+            if (text == null)
+            {
+                continue;
+            }
+
+            var result = ConvertSearchDoc(index, doc, selection);
+
+            result["@search.text"] = SuggestionTextBuilder.ApplyHighlighting(
+                text, terms, request.HighlightPreTag, request.HighlightPostTag);
+
+            response.Results.Add(result);
+        }
+
+        return Task.FromResult(response);
+    }
+
+    public Task<AutocompleteResponse> Autocomplete(SearchIndex index, AutocompleteRequest request)
+    {
+        var sourceFields = SuggesterSupport.ResolveSourceFields(index, request.SuggesterName, request.SearchFields);
+
+        var terms = SuggesterSupport.Tokenize(request.Search);
+
+        var response = new AutocompleteResponse { Coverage = GetSuggesterCoverage(request.MinimumCoverage) };
+
+        var query = SuggesterSupport.BuildQuery(request.Search, sourceFields, request.Fuzzy);
+
+        if (query == null)
+        {
+            return Task.FromResult(response);
+        }
+
+        var searcher = GetSearcher(index);
+
+        var filter = GetFilterFromRequest(new SearchRequest { Filter = request.Filter }, index);
+
+        var completeTerms = terms.GetRange(0, terms.Count - 1);
+        var partialTerm = terms[^1];
+
+        // Autocomplete returns distinct completions rather than one entry per document, so
+        // every match has to be considered: the same completion often occurs in many documents,
+        // and stopping at $top documents would cap the distinct completions well below it.
+        var docs = searcher.Search(query, filter, SuggesterSupport.MaxTop * 10);
+
+        // Ordered by first appearance, which follows Lucene's relevance order, while the set
+        // stays free of the duplicates the same word in many documents would otherwise produce.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var scoreDoc in docs.ScoreDocs)
+        {
+            if (seen.Count >= request.Top)
+            {
+                break;
+            }
+
+            var doc = searcher.Doc(scoreDoc.Doc);
+
+            foreach (var sourceField in sourceFields)
+            {
+                var text = doc.Get(sourceField);
+
+                if (string.IsNullOrEmpty(text))
+                {
+                    continue;
+                }
+
+                var completions = request.AutocompleteMode.Equals(
+                    AutocompleteModes.OneTermWithContext, StringComparison.OrdinalIgnoreCase)
+                    ? SuggestionTextBuilder.GetContextualCompletions(text, completeTerms, partialTerm)
+                    : SuggestionTextBuilder.GetCompletions(text, partialTerm, request.AutocompleteMode);
+
+                foreach (var completion in completions)
+                {
+                    if (seen.Count >= request.Top)
+                    {
+                        break;
+                    }
+
+                    if (!seen.Add(completion))
+                    {
+                        continue;
+                    }
+
+                    response.Results.Add(new AutocompleteItem(
+                        SuggestionTextBuilder.ApplyHighlighting(
+                            completion, [partialTerm], request.HighlightPreTag, request.HighlightPostTag),
+                        BuildQueryPlusText(request.Search, completion)));
+                }
+            }
+        }
+
+        return Task.FromResult(response);
+    }
+
+    /// <summary>
+    /// Replaces the partial final term of the caller's search text with the completion, which
+    /// is what a typeahead box puts back into the input.
+    /// </summary>
+    /// <remarks>
+    /// The completed portion of the query is preserved as the caller typed it, so only the
+    /// word being completed changes.
+    /// </remarks>
+    private static string BuildQueryPlusText(string? search, string completion)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            return completion;
+        }
+
+        var trimmed = search.TrimEnd();
+        var lastSpace = trimmed.LastIndexOf(' ');
+
+        return lastSpace < 0
+            ? completion
+            : string.Concat(trimmed.AsSpan(0, lastSpace + 1), completion);
+    }
+
+    /// <summary>
+    /// Coverage for a suggest or autocomplete call, which follows the same rule as a search:
+    /// reported only when the caller supplied <c>minimumCoverage</c>. See <see cref="SearchCoverage"/>.
+    /// </summary>
+    private static double? GetSuggesterCoverage(double? minimumCoverage)
+        => minimumCoverage == null ? null : SearchCoverage.Full;
+
     private static HitHighlighter? GetHighlighterFromRequest(SearchIndex index, SearchRequest request, Query query)
     {
         if (string.IsNullOrEmpty(request.Highlight))

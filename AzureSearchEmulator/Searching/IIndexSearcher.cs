@@ -13,4 +13,14 @@ public interface IIndexSearcher
     Task<int> GetDocCount(SearchIndex index);
 
     Task<SearchResponse> Search(SearchIndex index, SearchRequest request);
+
+    /// <summary>
+    /// Returns documents whose suggester source fields match a partial search term.
+    /// </summary>
+    Task<SuggestResponse> Suggest(SearchIndex index, SuggestRequest request);
+
+    /// <summary>
+    /// Returns completions for the term a caller is part-way through typing.
+    /// </summary>
+    Task<AutocompleteResponse> Autocomplete(SearchIndex index, AutocompleteRequest request);
 }

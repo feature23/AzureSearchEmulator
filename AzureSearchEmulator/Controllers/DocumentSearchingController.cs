@@ -171,6 +171,167 @@ public class DocumentSearchingController(
         return Ok(oDataResponse);
     }
 
+    [HttpGet]
+    [Route("indexes/{indexKey}/docs/suggest")]
+    [Route("indexes({indexKey})/docs/suggest")]
+    public async Task<IActionResult> SuggestGet(string indexKey,
+        [FromQuery(Name = "$filter")] string? filter,
+        [FromQuery(Name = "$orderby")] string? orderby,
+        [FromQuery(Name = "$select")] string? select,
+        [FromQuery(Name = "$top")] int? top,
+        [FromQuery] SuggestRequest suggestRequest)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (top != null)
+        {
+            suggestRequest.Top = top.Value;
+        }
+
+        suggestRequest.Filter ??= filter;
+        suggestRequest.Orderby ??= orderby;
+        suggestRequest.Select ??= select;
+
+        return await SuggestPost(indexKey, suggestRequest);
+    }
+
+    [HttpPost]
+    [Route("indexes/{indexKey}/docs/suggest")]
+    [Route("indexes({indexKey})/docs/suggest")]
+    [Route("indexes({indexKey})/docs/search.post.suggest")]
+    public async Task<IActionResult> SuggestPost(string indexKey, [FromBody] SuggestRequest request)
+    {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+
+        if (SuggesterSupport.ValidateTop(request.Top) is { } topError)
+        {
+            ModelState.AddModelError(nameof(request.Top), topError);
+            return BadRequest(ModelState);
+        }
+
+        var index = await searchIndexRepository.Get(indexKey);
+
+        if (index == null)
+        {
+            return NotFound($"The specified index does not exist. Index Key: {indexKey}");
+        }
+
+        SuggestResponse response;
+
+        try
+        {
+            response = await indexSearcher.Suggest(index, request);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A missing or misnamed suggester is a fault in the request, not in the emulator,
+            // so it is reported as a 400 rather than escaping as a 500.
+            return BadRequest(ex.Message);
+        }
+
+        var oDataResponse = new JsonObject();
+
+        if (response.Coverage != null)
+        {
+            oDataResponse["@search.coverage"] = JsonValue.Create(response.Coverage);
+        }
+
+        oDataResponse["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray());
+
+        return Ok(oDataResponse);
+    }
+
+    [HttpGet]
+    [Route("indexes/{indexKey}/docs/autocomplete")]
+    [Route("indexes({indexKey})/docs/autocomplete")]
+    public async Task<IActionResult> AutocompleteGet(string indexKey,
+        [FromQuery(Name = "$filter")] string? filter,
+        [FromQuery(Name = "$top")] int? top,
+        [FromQuery] AutocompleteRequest autocompleteRequest)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        if (top != null)
+        {
+            autocompleteRequest.Top = top.Value;
+        }
+
+        autocompleteRequest.Filter ??= filter;
+
+        return await AutocompletePost(indexKey, autocompleteRequest);
+    }
+
+    [HttpPost]
+    [Route("indexes/{indexKey}/docs/autocomplete")]
+    [Route("indexes({indexKey})/docs/autocomplete")]
+    [Route("indexes({indexKey})/docs/search.post.autocomplete")]
+    public async Task<IActionResult> AutocompletePost(string indexKey, [FromBody] AutocompleteRequest request)
+    {
+        // Strip quotes that may be captured from OData-style URLs
+        indexKey = indexKey.Trim('\'');
+
+        if (SuggesterSupport.ValidateTop(request.Top) is { } topError)
+        {
+            ModelState.AddModelError(nameof(request.Top), topError);
+            return BadRequest(ModelState);
+        }
+
+        if (!AutocompleteModes.IsValid(request.AutocompleteMode))
+        {
+            ModelState.AddModelError(nameof(request.AutocompleteMode),
+                $"autocompleteMode must be one of {AutocompleteModes.OneTerm}, " +
+                $"{AutocompleteModes.TwoTerms}, or {AutocompleteModes.OneTermWithContext}.");
+            return BadRequest(ModelState);
+        }
+
+        var index = await searchIndexRepository.Get(indexKey);
+
+        if (index == null)
+        {
+            return NotFound($"The specified index does not exist. Index Key: {indexKey}");
+        }
+
+        AutocompleteResponse response;
+
+        try
+        {
+            response = await indexSearcher.Autocomplete(index, request);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+
+        var oDataResponse = new JsonObject();
+
+        if (response.Coverage != null)
+        {
+            oDataResponse["@search.coverage"] = JsonValue.Create(response.Coverage);
+        }
+
+        var items = new JsonArray();
+
+        foreach (var item in response.Results)
+        {
+            items.Add(new JsonObject
+            {
+                ["text"] = JsonValue.Create(item.Text),
+                ["queryPlusText"] = JsonValue.Create(item.QueryPlusText),
+            });
+        }
+
+        oDataResponse["value"] = items;
+
+        return Ok(oDataResponse);
+    }
+
     /// <summary>
     /// Renders the counted facets as the <c>@search.facets</c> object.
     /// </summary>
