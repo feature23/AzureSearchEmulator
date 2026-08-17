@@ -16,7 +16,7 @@ namespace AzureSearchEmulator.Searching;
 
 public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory) : IIndexSearcher
 {
-    public Task<JsonObject?> GetDoc(SearchIndex index, string key)
+    public Task<JsonObject?> GetDoc(SearchIndex index, string key, string? select = null)
     {
         var searcher = GetSearcher(index);
 
@@ -31,7 +31,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var doc = searcher.Doc(docs.ScoreDocs[0].Doc);
 
-        var result = ConvertSearchDoc(index, doc);
+        var result = ConvertSearchDoc(index, doc, FieldSelection.Parse(index, select));
 
         return Task.FromResult<JsonObject?>(result);
     }
@@ -71,6 +71,8 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var highlighter = GetHighlighterFromRequest(index, request, query);
 
+        var selection = FieldSelection.Parse(index, request.Select);
+
         var docs = searcher.Search(query, filter, request.Skip + request.Top, sort, true, true);
 
         var response = new SearchResponse();
@@ -81,7 +83,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
             var doc = searcher.Doc(scoreDoc.Doc);
 
-            var result = ConvertSearchDoc(index, doc);
+            var result = ConvertSearchDoc(index, doc, selection);
 
             result["@search.score"] = scoreDoc.Score;
 
@@ -471,12 +473,21 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             .Select(i => i.Path);
     }
 
-    private static JsonObject ConvertSearchDoc(SearchIndex index, Lucene.Net.Documents.Document doc)
+    private static JsonObject ConvertSearchDoc(
+        SearchIndex index,
+        Lucene.Net.Documents.Document doc,
+        FieldSelection? selection = null)
     {
         var result = new JsonObject();
 
         foreach (var field in index.Fields.Where(i => i.Retrievable))
         {
+            // A null selection means no $select was given, so every retrievable field stays.
+            if (selection?.Includes(field.Name) == false)
+            {
+                continue;
+            }
+
             if (field.IsComplex())
             {
                 // Complex values round-trip through the stored JSON sidecar rather than the
@@ -485,7 +496,10 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 var storedComplexJson = doc.Get(ComplexTypeSupport.GetComplexStorageFieldName(field.Name));
                 if (storedComplexJson != null)
                 {
-                    result[field.Name] = FilterToRetrievableSubFields(field, JsonNode.Parse(storedComplexJson));
+                    result[field.Name] = FilterToRetrievableSubFields(
+                        field,
+                        JsonNode.Parse(storedComplexJson),
+                        selection?.GetSubSelection(field.Name));
                 }
                 continue;
             }
@@ -539,8 +553,9 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
     }
 
     /// <summary>
-    /// Strips sub-fields marked non-retrievable from a complex value read back out of its
-    /// stored JSON sidecar.
+    /// Strips sub-fields from a complex value read back out of its stored JSON sidecar: those
+    /// marked non-retrievable always, and those outside <paramref name="selection"/> when a
+    /// <c>$select</c> narrowed the request.
     /// </summary>
     /// <remarks>
     /// The sidecar deliberately holds the document's original object so that retrieval is
@@ -548,8 +563,16 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
     /// applies retrievability per sub-field, so they are removed on the way out. Properties
     /// with no matching sub-field are dropped too: they were never part of the schema and
     /// were never indexed.
+    ///
+    /// A null <paramref name="selection"/> means this value is wanted whole, either because
+    /// there was no <c>$select</c> or because the path named the complex field itself. The
+    /// same selection applies to every element of a collection, since <c>$select</c> narrows
+    /// by path and cannot address one element.
     /// </remarks>
-    private static JsonNode? FilterToRetrievableSubFields(SearchField field, JsonNode? value)
+    private static JsonNode? FilterToRetrievableSubFields(
+        SearchField field,
+        JsonNode? value,
+        FieldSelection? selection = null)
     {
         switch (value)
         {
@@ -562,7 +585,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
                 foreach (var element in array)
                 {
-                    filtered.Add(FilterToRetrievableSubFields(field, element));
+                    filtered.Add(FilterToRetrievableSubFields(field, element, selection));
                 }
 
                 return filtered;
@@ -574,6 +597,11 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
                 foreach (var subField in field.Fields.Where(f => f.Retrievable))
                 {
+                    if (selection?.Includes(subField.Name) == false)
+                    {
+                        continue;
+                    }
+
                     var subValue = obj.FirstOrDefault(p =>
                         string.Equals(p.Key, subField.Name, StringComparison.OrdinalIgnoreCase)).Value;
 
@@ -583,7 +611,10 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                     }
 
                     filtered[subField.Name] = subField.IsComplex()
-                        ? FilterToRetrievableSubFields(subField, subValue.DeepClone())
+                        ? FilterToRetrievableSubFields(
+                            subField,
+                            subValue.DeepClone(),
+                            selection?.GetSubSelection(subField.Name))
                         : subValue.DeepClone();
                 }
 
