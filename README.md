@@ -51,6 +51,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
     sub-field paths, i.e. `Address/City eq 'Seattle'`
   * `$orderby` - OData sort expression to sort results, i.e. `Type asc,Title desc`, including
     sorting by distance, i.e. `geo.distance(Location, geography'POINT(-122.131577 47.678581)') asc`
+  * `$select` - Comma-delimited list of fields to return, i.e. `Id,Name,Address/City`; a path may
+    name a complex field to take it whole or reach inside one to take a single sub-field
   * `facet` - Field to compute facet buckets over, repeatable, with optional
     `count`/`sort`/`values`/`interval`/`timeoffset` options, i.e. `facet=Category,count:5`
     (see Faceted search below)
@@ -63,6 +65,25 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
+
+### Unsupported search parameters
+
+The following search parameters are rejected with `501 Not Implemented` rather than accepted
+and ignored:
+
+* `scoringProfile` and `scoringParameter`/`scoringParameters` - custom relevance scoring
+* `sessionId` - sticky sessions for consistent scoring across replicas
+* `minimumCoverage`, when set below `100` - accepting partial index coverage
+
+Returning results that quietly differ from Azure's is the worst failure mode for an emulator:
+your code would pass locally and fail against the real service, with nothing in the local run
+pointing at the parameter that was dropped. Failing loudly instead means the gap is visible
+where it is introduced.
+
+`minimumCoverage=100` is Azure's default and is answered normally — the emulator searches a
+single local index, so coverage is always total and the requirement is genuinely met.
+Similarly, `scoringStatistics` is accepted because `local` and `global` differ only in whether
+term statistics are aggregated across replicas, and there is only one.
 
 ### Faceted search
 

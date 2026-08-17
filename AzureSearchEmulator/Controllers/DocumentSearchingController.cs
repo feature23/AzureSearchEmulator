@@ -69,6 +69,11 @@ public class DocumentSearchingController(
         [FromQuery(Name = "$skip")] int? skip,
         [FromQuery(Name = "$top")] int? top,
         [FromQuery(Name = "facet")] IList<string>? facet,
+        // Azure's GET syntax names this one in the singular and repeats it, unlike the POST
+        // body's "scoringParameters" array, so it needs its own binding to be seen at all —
+        // and an unsupported parameter that binds to nothing would be silently ignored, which
+        // is precisely what issue #39 is about.
+        [FromQuery(Name = "scoringParameter")] IList<string>? scoringParameter,
         [FromQuery] SearchRequest searchRequest)
     {
         // Strip quotes that may be captured from OData-style URLs
@@ -98,6 +103,7 @@ public class DocumentSearchingController(
         searchRequest.Orderby ??= orderby;
         searchRequest.Select ??= select;
         searchRequest.Facets ??= facet;
+        searchRequest.ScoringParameters ??= scoringParameter;
 
         return await SearchPost(indexKey, searchRequest);
     }
@@ -124,6 +130,14 @@ public class DocumentSearchingController(
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
+        }
+
+        // Checked before the index lookup so that an unsupported parameter is reported as
+        // itself, rather than being masked by a 404 for an index the caller has not created
+        // yet. See UnsupportedSearchParameters for why these are refused instead of ignored.
+        if (UnsupportedSearchParameters.GetRejectionMessage(request) is { } rejection)
+        {
+            return StatusCode(StatusCodes.Status501NotImplemented, rejection);
         }
 
         var index = await searchIndexRepository.Get(indexKey);
