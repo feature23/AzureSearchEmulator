@@ -53,12 +53,10 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     public Task<SearchResponse> Search(SearchIndex index, SearchRequest request)
     {
-        // Refused before anything else, so a request asking for a vector search never gets
-        // ordinary text results back as though it had been honoured (issue #46).
-        if (VectorSearchSupport.GetUnsupportedQueryMessage(request) is { } vectorError)
-        {
-            throw new InvalidOperationException(vectorError);
-        }
+        // Validated against the index definition before the reader is opened, so a malformed
+        // request is reported as the fault it is rather than as whatever the storage layer
+        // happens to say about an index that may not have been written to yet (issue #46).
+        VectorQuerySupport.Validate(index, request);
 
         var searcher = GetSearcher(index);
 
@@ -73,10 +71,15 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             throw new InvalidOperationException(missing);
         }
 
+        // Built before the query because a vector query needs it: under preFilter — the default
+        // and the only mode Azure applies to the scan itself — the filter decides which
+        // documents the nearest-neighbour search considers at all (issue #46).
+        var filter = GetFilterFromRequest(request, index);
+
         // Captured once so every document in the response is scored against the same instant;
         // a freshness function reading the clock per document would rank inconsistently within
         // a single query.
-        var query = GetQueryFromRequest(index, request, profile, scoringParameters, DateTimeOffset.UtcNow);
+        var query = GetQueryFromRequest(index, request, profile, scoringParameters, DateTimeOffset.UtcNow, filter);
 
         // Facet expressions are parsed even when nothing can match, so that an invalid one is
         // still reported as the error it is rather than silently returning no facets.
@@ -95,8 +98,6 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 Coverage = SearchCoverage.GetCoverage(request),
             });
         }
-
-        var filter = GetFilterFromRequest(request, index);
 
         var sort = GetSortFromRequest(index, request);
 
@@ -615,17 +616,37 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         SearchRequest request,
         ScoringProfile? profile,
         ScoringParameterCollection parameters,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Filter? filter)
     {
-        var query = GetBaseQueryFromRequest(index, request, profile);
+        var vectorQueries = VectorQuerySupport.HasVectorQueries(request)
+            ? VectorQuerySupport.BuildQueries(index, request, GetVectorPreFilter(request, filter))
+            : [];
 
-        if (query == null || profile == null || !IsScored(request))
+        var query = GetBaseQueryFromRequest(index, request, profile, vectorQueries.Count > 0);
+
+        if (query != null && profile != null && IsScored(request))
         {
-            return query;
+            query = ScoringProfileQuery.Wrap(query, index, profile, parameters, now);
         }
 
-        return ScoringProfileQuery.Wrap(query, index, profile, parameters, now);
+        return VectorQuerySupport.Combine(query, vectorQueries, request);
     }
+
+    /// <summary>
+    /// The filter a vector scan applies to its candidates, which is the request's filter under
+    /// <c>preFilter</c> and nothing under <c>postFilter</c>.
+    /// </summary>
+    /// <remarks>
+    /// Under <c>postFilter</c> the filter still applies — the surrounding search passes it to
+    /// Lucene as usual — but it applies after the neighbours have been chosen, so a filtered-out
+    /// document consumes one of the <c>k</c> slots and the result can be shorter than <c>k</c>.
+    /// That is the behaviour Azure documents, and the reason <c>preFilter</c> is the default.
+    /// </remarks>
+    private static Filter? GetVectorPreFilter(SearchRequest request, Filter? filter)
+        => string.Equals(request.VectorFilterMode, "postFilter", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : filter;
 
     /// <summary>
     /// Whether a request produces ranked results at all.
@@ -639,21 +660,38 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
     private static bool IsScored(SearchRequest request)
         => request.Search is not (null or "*" or "*:*");
 
-    private static Query? GetBaseQueryFromRequest(SearchIndex index, SearchRequest request, ScoringProfile? profile)
+    private static Query? GetBaseQueryFromRequest(
+        SearchIndex index,
+        SearchRequest request,
+        ScoringProfile? profile,
+        bool hasVectorQueries = false)
     {
         if (request.Search == null)
         {
-            return new MatchAllDocsQuery();
+            // A vector query supplies the whole result set on its own, so there is no text half
+            // to match against. Returning null rather than MatchAllDocsQuery keeps the vector
+            // query from being intersected with every document in the index (issue #46).
+            return hasVectorQueries ? null : new MatchAllDocsQuery();
         }
 
-        // Searchable sub-fields count too, and are addressed by their path.
+        // Searchable sub-fields count too, and are addressed by their path. Vector fields are
+        // excluded: they are searchable in Azure's sense — a vector query searches them — but
+        // they hold no terms for a text query to match, so treating one as the text field to
+        // parse against would produce a query that can never match.
         var firstTextFieldPath = ComplexTypeSupport.EnumerateLeafFields(index)
-            .Where(i => i.Field.Searchable.GetValueOrDefault())
+            .Where(i => i.Field.Searchable.GetValueOrDefault() && !i.Field.IsVectorField())
             .Select(i => i.Path)
             .FirstOrDefault();
 
         if (firstTextFieldPath == null)
         {
+            // An index of nothing but vector fields is legitimate, and a vector query against it
+            // needs no text field at all. Only a text query is stuck.
+            if (hasVectorQueries)
+            {
+                return null;
+            }
+
             throw new InvalidOperationException("Unable to search with no searchable fields");
         }
 

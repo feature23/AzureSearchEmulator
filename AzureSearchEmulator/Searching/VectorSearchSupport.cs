@@ -228,44 +228,6 @@ public static class VectorSearchSupport
     }
 
     /// <summary>
-    /// Returns a message refusing a request the emulator cannot answer, or null when the
-    /// request asks for no vector search at all.
-    /// </summary>
-    /// <remarks>
-    /// This phase implements the index-definition and storage half of vector search; the query
-    /// half follows. Until then a request carrying a vector query is refused, because the
-    /// alternative — binding the parameter and ignoring it — returns ordinary text results that
-    /// look like an answer to a question that was never asked.
-    ///
-    /// The two refusals are not the same. A <c>text</c> query needs a hosted embedding model
-    /// and will stay unsupported after vector search works, so it is worth naming that reason
-    /// separately from "not built yet".
-    /// </remarks>
-    public static string? GetUnsupportedQueryMessage(SearchRequest request)
-    {
-        if (request.VectorQueries is not { Count: > 0 } queries)
-        {
-            // vectorFilterMode only qualifies a vector query, so on its own it changes nothing
-            // and is not worth refusing a request over.
-            return null;
-        }
-
-        foreach (var query in queries)
-        {
-            if (string.Equals(query.Kind, "text", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Vector queries of kind 'text' are not supported: generating an " +
-                       "embedding from query text requires a hosted embedding model. Supply a " +
-                       "precomputed embedding with kind 'vector' instead.";
-            }
-        }
-
-        return "Vector queries are not supported yet. This build supports vector fields in an " +
-               "index definition and stores their values, but cannot yet answer a query " +
-               "against them.";
-    }
-
-    /// <summary>
     /// Creates the Lucene fields for one document's vector.
     /// </summary>
     /// <remarks>

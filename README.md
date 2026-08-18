@@ -69,9 +69,9 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Suggestions and autocomplete via `docs/suggest` and `docs/autocomplete` (see Suggesters and
   autocomplete below)
-* Vector fields: `Collection(Edm.Single)` with `vectorSearch` profiles and algorithms, for
-  index definition, document upload, and retrieval. Querying by vector is not supported yet
-  (see Vector fields below)
+* Vector search: `Collection(Edm.Single)` fields with `vectorSearch` profiles and algorithms,
+  and `vectorQueries` with all three metrics and both filter modes (see Vector fields below).
+  Hybrid search is not supported yet
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
 
@@ -301,11 +301,58 @@ A vector field may be declared inside an `Edm.ComplexType`, but not inside a
 the elements of a collection would contribute have nowhere to go. That combination is
 rejected when the index is created.
 
-**Querying by vector is not supported yet.** A request carrying `vectorQueries` is rejected
-rather than silently ignored, so a search never returns ordinary text results as though the
-vector query had been honoured. `vectorizers` are also rejected, since generating an
-embedding from query text requires a hosted embedding model; supply precomputed embeddings
-instead.
+### Vector queries
+
+A vector field is searched with `vectorQueries`, supplying a precomputed embedding:
+
+```json
+{
+  "vectorQueries": [
+    { "kind": "vector", "vector": [0.1, 0.2, 0.3], "fields": "embedding", "k": 5 }
+  ]
+}
+```
+
+`k` and `kNearestNeighborsCount` are both accepted — the REST reference uses the former, the
+Azure SDK sends the latter. Naming no `fields` searches every vector field in the index.
+Fields searched together must share a metric, since one query produces one ranking.
+
+The search is **exhaustive**: every document holding a vector is scored and the best `k` are
+kept, for both algorithm kinds. Azure reaches the same answer approximately through an HNSW
+graph, trading recall for speed at a scale the emulator does not operate at. An exact answer
+is deterministic, so a test asserting which documents came back cannot become flaky.
+
+`vectorFilterMode` selects when `$filter` applies:
+
+* `preFilter` (default) — the filter narrows the candidates *before* the neighbours are
+  chosen, so a full `k` of matching documents comes back.
+* `postFilter` — the filter applies *after* selection, so an excluded document still consumes
+  one of the `k` slots and the result can be shorter than `k`.
+
+`k` and `$top` are different knobs: `k` is how many neighbours the vector query contributes,
+`$top` is how many of them a page returns.
+
+#### Scores
+
+For `cosine`, `@search.score` follows the formula Azure documents, `1 / (1 + cosine_distance)`
+— an exact match scores 1 and an orthogonal vector 0.5.
+
+For `dotProduct` and `euclidean`, Azure confirms that a transform from similarity to score
+exists but does not publish it, so **the emulator's scores for those two metrics are its own**.
+They are strictly monotonic in the similarity and land in the same `(0, 1]` range, so the
+*ordering* is faithful for every metric and the *absolute score* is faithful only for cosine.
+Assert on which documents came back and in what order rather than on a literal score, unless
+the metric is cosine.
+
+#### Not supported
+
+* **Hybrid search** — combining `search` with `vectorQueries`. Azure fuses the two rankings
+  with Reciprocal Rank Fusion; until that is implemented the request is rejected, since a
+  naive union would rank on scores from unrelated scales.
+* **`kind: "text"` queries and `vectorizers`**, which need a hosted embedding model. Supply
+  precomputed embeddings instead.
+* **Compression and quantization**, which are accepted in an index definition and ignored;
+  the emulator stores vectors uncompressed, which can only make its results more exact.
 
 ### Complex type support
 
