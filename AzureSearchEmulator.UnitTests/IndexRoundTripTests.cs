@@ -53,7 +53,10 @@ public class IndexRoundTripTests
           ],
           "similarity": { "@odata.type": "#Microsoft.Azure.Search.BM25Similarity", "k1": 1.2, "b": 0.75 },
           "semantic": { "configurations": [{ "name": "sem", "prioritizedFields": {} }] },
-          "vectorSearch": { "profiles": [{ "name": "vp", "algorithm": "hnsw" }] },
+          "vectorSearch": {
+            "algorithms": [{ "name": "hnswAlgo", "kind": "hnsw" }],
+            "profiles": [{ "name": "vp", "algorithm": "hnswAlgo" }]
+          },
           "encryptionKey": { "keyVaultKeyName": "k", "keyVaultUri": "https://example.vault.azure.net" }
         }
         """;
@@ -89,17 +92,21 @@ public class IndexRoundTripTests
         var profile = Assert.Single(index.ScoringProfiles);
         Assert.Equal("boostDescription", profile.Name);
         Assert.Equal(2.5, profile.Text?.Weights["description"]);
+
+        // Modelled since issue #46, for the same reason.
+        var vectorProfile = Assert.Single(index.VectorSearch?.Profiles!);
+        Assert.Equal("vp", vectorProfile.Name);
+        Assert.Equal("hnswAlgo", vectorProfile.Algorithm);
     }
 
     [Theory]
-    // scoringProfiles is deliberately absent: it became a modelled property in issue #47, so it
-    // no longer travels through the extension bag. ModelledProperties_SurviveRoundTrip covers
-    // it instead.
+    // scoringProfiles and vectorSearch are deliberately absent: they became modelled properties
+    // in issues #47 and #46, so they no longer travel through the extension bag.
+    // ModelledProperties_SurviveRoundTrip and VectorSearchJsonTests cover them instead.
     [InlineData("corsOptions")]
     [InlineData("analyzers")]
     [InlineData("similarity")]
     [InlineData("semantic")]
-    [InlineData("vectorSearch")]
     [InlineData("encryptionKey")]
     public void UnmodelledProperty_SurvivesRoundTrip(string property)
     {
@@ -136,19 +143,23 @@ public class IndexRoundTripTests
             result["analyzers"]?[0]?["@odata.type"]?.GetValue<string>());
     }
 
+    /// <summary>
+    /// <c>dimensions</c> and <c>vectorSearchProfile</c> are deliberately not used here: they
+    /// became modelled properties in issue #46, and <c>VectorSearchJsonTests</c> covers them.
+    /// Exercising the field-level extension bag needs a property that is still unmodelled.
+    /// </summary>
     [Fact]
     public void UnmodelledFieldProperty_SurvivesRoundTrip()
     {
         const string json =
             """
             {
-              "name": "vectors",
+              "name": "hotels",
               "fields": [
                 {
-                  "name": "embedding",
-                  "type": "Collection(Edm.Single)",
-                  "dimensions": 1536,
-                  "vectorSearchProfile": "vp"
+                  "name": "city",
+                  "type": "Edm.String",
+                  "normalizer": "lowercase"
                 }
               ]
             }
@@ -157,8 +168,7 @@ public class IndexRoundTripTests
         var result = RoundTrip(json);
         var field = result["fields"]?[0];
 
-        Assert.Equal(1536, field?["dimensions"]?.GetValue<int>());
-        Assert.Equal("vp", field?["vectorSearchProfile"]?.GetValue<string>());
+        Assert.Equal("lowercase", field?["normalizer"]?.GetValue<string>());
     }
 
     /// <summary>

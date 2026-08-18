@@ -53,6 +53,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
     public Task<SearchResponse> Search(SearchIndex index, SearchRequest request)
     {
+        // Refused before anything else, so a request asking for a vector search never gets
+        // ordinary text results back as though it had been honoured (issue #46).
+        if (VectorSearchSupport.GetUnsupportedQueryMessage(request) is { } vectorError)
+        {
+            throw new InvalidOperationException(vectorError);
+        }
+
         var searcher = GetSearcher(index);
 
         // Resolved before the query is built because a scoring profile shapes both halves of

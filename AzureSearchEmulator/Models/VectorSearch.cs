@@ -1,0 +1,244 @@
+using System.Text.Json.Serialization;
+
+namespace AzureSearchEmulator.Models;
+
+/// <summary>
+/// The vector search configuration of an index: the algorithms available and the profiles
+/// fields bind to (issue #46).
+/// </summary>
+/// <remarks>
+/// A vector field does not name an algorithm directly. It names a profile, and the profile
+/// names an algorithm; the indirection is what lets several fields share one algorithm
+/// configuration, and it is the shape the Azure SDK serializes, so the emulator models it the
+/// same way rather than flattening it.
+///
+/// <c>vectorizers</c> and <c>compressions</c> are deliberately not modelled. Both describe
+/// work the emulator cannot do — a vectorizer calls a hosted embedding model, and a
+/// compression changes the stored representation to trade recall for size — so they stay in
+/// <see cref="SearchIndex.AdditionalProperties"/>, preserved verbatim but inert.
+/// </remarks>
+public class VectorSearch
+{
+    /// <summary>
+    /// The named algorithm configurations profiles can refer to.
+    /// </summary>
+    public IList<VectorSearchAlgorithm> Algorithms { get; set; } = new List<VectorSearchAlgorithm>();
+
+    /// <summary>
+    /// The named profiles a field's <see cref="SearchField.VectorSearchProfile"/> binds to.
+    /// </summary>
+    public IList<VectorSearchProfile> Profiles { get; set; } = new List<VectorSearchProfile>();
+
+    /// <summary>
+    /// Finds the profile a field named, or null when the index defines none by that name.
+    /// </summary>
+    /// <remarks>
+    /// Matched case-insensitively, as Azure matches the other named parts of an index
+    /// definition.
+    /// </remarks>
+    public VectorSearchProfile? FindProfile(string name)
+        => Profiles.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Finds the algorithm a profile named, or null when the index defines none by that name.
+    /// </summary>
+    public VectorSearchAlgorithm? FindAlgorithm(string name)
+        => Algorithms.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Resolves the similarity metric a field's profile selects, or null when the field binds
+    /// to no usable profile.
+    /// </summary>
+    /// <remarks>
+    /// The metric lives on the algorithm's parameter object rather than the algorithm itself,
+    /// and which parameter object holds it depends on the kind, so resolving it is worth doing
+    /// in one place. A profile naming a missing algorithm returns null rather than throwing:
+    /// <see cref="Indexing.VectorSearchValidator"/> rejects that at definition time, so by the
+    /// time a query resolves a metric the combination is already known to be sound.
+    /// </remarks>
+    public VectorSearchMetric? ResolveMetric(string profileName)
+    {
+        if (FindProfile(profileName) is not { } profile
+            || FindAlgorithm(profile.Algorithm) is not { } algorithm)
+        {
+            return null;
+        }
+
+        return algorithm.GetMetric();
+    }
+}
+
+/// <summary>
+/// One named algorithm configuration.
+/// </summary>
+/// <remarks>
+/// Azure discriminates on <c>kind</c> and puts the tuning knobs in a parameter object named
+/// after it. The emulator accepts both kinds and implements both as an exhaustive scan, so the
+/// only part of the configuration that changes a result is the metric — see
+/// <see cref="Searching.VectorSearchSupport"/> for why that is a defensible emulation.
+/// </remarks>
+public class VectorSearchAlgorithm
+{
+    /// <summary>
+    /// The name a <see cref="VectorSearchProfile"/> refers to.
+    /// </summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>
+    /// Which algorithm this configures.
+    /// </summary>
+    public VectorSearchAlgorithmKind Kind { get; set; } = VectorSearchAlgorithmKind.Hnsw;
+
+    /// <summary>
+    /// Tuning for <see cref="VectorSearchAlgorithmKind.Hnsw"/>, ignored for the other kind.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public HnswParameters? HnswParameters { get; set; }
+
+    /// <summary>
+    /// Tuning for <see cref="VectorSearchAlgorithmKind.ExhaustiveKnn"/>, ignored for the other
+    /// kind.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ExhaustiveKnnParameters? ExhaustiveKnnParameters { get; set; }
+
+    /// <summary>
+    /// The metric this algorithm's parameters select, defaulting to
+    /// <see cref="VectorSearchMetric.Cosine"/> as Azure does.
+    /// </summary>
+    /// <remarks>
+    /// The parameter object is optional in the JSON, and a kind's parameters may be absent or
+    /// belong to the other kind, so this reads the one matching <see cref="Kind"/> and falls
+    /// back to the default rather than trusting either to be present.
+    /// </remarks>
+    public VectorSearchMetric GetMetric()
+        => Kind switch
+        {
+            VectorSearchAlgorithmKind.ExhaustiveKnn => ExhaustiveKnnParameters?.Metric,
+            _ => HnswParameters?.Metric
+        } ?? VectorSearchMetric.Cosine;
+}
+
+/// <summary>
+/// Tuning for the HNSW graph.
+/// </summary>
+/// <remarks>
+/// Every property here except the metric is accepted and ignored. The emulator answers a
+/// vector query by exhaustive scan, which has no graph to tune, and the issue asks for these
+/// to be accepted rather than rejected so that an index definition written for the real
+/// service is usable unchanged. Retaining them also keeps them in the definition the emulator
+/// writes back.
+/// </remarks>
+public class HnswParameters
+{
+    /// <summary>
+    /// Bi-directional link count per node. Accepted and ignored.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? M { get; set; }
+
+    /// <summary>
+    /// Candidate list size during graph construction. Accepted and ignored.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? EfConstruction { get; set; }
+
+    /// <summary>
+    /// Candidate list size during search. Accepted and ignored.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? EfSearch { get; set; }
+
+    /// <summary>
+    /// The similarity metric, which the emulator does honour.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VectorSearchMetric? Metric { get; set; }
+}
+
+/// <summary>
+/// Tuning for exhaustive k-nearest-neighbour search.
+/// </summary>
+public class ExhaustiveKnnParameters
+{
+    /// <summary>
+    /// The similarity metric.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VectorSearchMetric? Metric { get; set; }
+}
+
+/// <summary>
+/// One named profile, binding a field to an algorithm.
+/// </summary>
+public class VectorSearchProfile
+{
+    /// <summary>
+    /// The name a field's <see cref="SearchField.VectorSearchProfile"/> refers to.
+    /// </summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>
+    /// The <see cref="VectorSearchAlgorithm.Name"/> this profile selects.
+    /// </summary>
+    public string Algorithm { get; set; } = "";
+
+    /// <summary>
+    /// The vectorizer that would turn query text into a vector.
+    /// </summary>
+    /// <remarks>
+    /// Kept so the profile round-trips, but unusable: a vectorizer calls a hosted embedding
+    /// model, so a query relying on one is rejected rather than answered wrongly.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Vectorizer { get; set; }
+
+    /// <summary>
+    /// The compression configuration applied to this profile's vectors.
+    /// </summary>
+    /// <remarks>
+    /// Kept for round-tripping and otherwise ignored; the emulator stores vectors uncompressed,
+    /// which can only make its results more exact than the service's.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Compression { get; set; }
+}
+
+/// <summary>
+/// The algorithm kinds Azure accepts.
+/// </summary>
+[JsonConverter(typeof(CamelCaseEnumConverter<VectorSearchAlgorithmKind>))]
+public enum VectorSearchAlgorithmKind
+{
+    /// <summary>
+    /// Hierarchical Navigable Small World, an approximate nearest-neighbour graph.
+    /// </summary>
+    Hnsw,
+
+    /// <summary>
+    /// Exhaustive k-nearest-neighbour, which scans every vector.
+    /// </summary>
+    ExhaustiveKnn
+}
+
+/// <summary>
+/// The similarity metrics Azure accepts.
+/// </summary>
+[JsonConverter(typeof(CamelCaseEnumConverter<VectorSearchMetric>))]
+public enum VectorSearchMetric
+{
+    /// <summary>
+    /// Cosine similarity, the default and by far the most common choice.
+    /// </summary>
+    Cosine,
+
+    /// <summary>
+    /// Euclidean (L2) distance, where smaller is closer.
+    /// </summary>
+    Euclidean,
+
+    /// <summary>
+    /// Dot product, which equals cosine similarity for normalized vectors.
+    /// </summary>
+    DotProduct
+}

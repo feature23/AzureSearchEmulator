@@ -76,6 +76,10 @@ public static class IndexSchemaChangeValidator
            || existing.Sortable.GetValueOrDefault() != updated.Sortable.GetValueOrDefault()
            || existing.Facetable.GetValueOrDefault() != updated.Facetable.GetValueOrDefault()
            || existing.Retrievable != updated.Retrievable
+           // A vector's length is fixed once documents exist: every stored vector was accepted
+           // against the old value, so changing it would leave them disagreeing with the schema
+           // and make the field unsearchable against a query vector of either length (issue #46).
+           || existing.Dimensions != updated.Dimensions
            || !string.Equals(existing.Analyzer, updated.Analyzer, StringComparison.Ordinal)
            || !string.Equals(existing.SearchAnalyzer, updated.SearchAnalyzer, StringComparison.Ordinal)
            || !string.Equals(existing.IndexAnalyzer, updated.IndexAnalyzer, StringComparison.Ordinal);
