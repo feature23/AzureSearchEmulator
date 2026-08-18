@@ -62,6 +62,38 @@ public class TaggedProduct
 }
 
 /// <summary>
+/// A product carrying one field of every type a scoring function can read, used to exercise
+/// scoring profiles (issue #47) end-to-end through the Azure Search SDK.
+/// </summary>
+/// <remarks>
+/// Going through the SDK matters especially here: <c>ScoringProfile</c> and the four function
+/// types are strongly typed in the SDK, so a definition the emulator stored in a shape the SDK
+/// cannot read back would fail these tests rather than pass unnoticed.
+/// </remarks>
+public class ScoredProduct
+{
+    public required string Id { get; init; }
+
+    public required string Name { get; init; }
+
+    public required string Description { get; init; }
+
+    public double Rating { get; init; }
+
+    public DateTimeOffset? Updated { get; init; }
+
+    public GeoPoint? Location { get; init; }
+
+    public string[] Tags { get; init; } = [];
+
+    /// <summary>
+    /// Mirrors <see cref="Rating"/>, so a magnitude function over a numeric collection can be
+    /// checked to rank the same way one over the scalar does.
+    /// </summary>
+    public int[] Sizes { get; init; } = [];
+}
+
+/// <summary>
 /// A hotel with a complex address and a collection of complex room objects, used to
 /// exercise Edm.ComplexType and Collection(Edm.ComplexType) support (issue #7) end-to-end
 /// through the Azure Search SDK.

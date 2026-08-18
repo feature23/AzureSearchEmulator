@@ -15,12 +15,26 @@ public class SearchIndex
     public IList<SearchSuggester> Suggesters { get; init; } = new List<SearchSuggester>();
 
     /// <summary>
+    /// Relevance-tuning profiles available to <c>search</c> (issue #47).
+    /// </summary>
+    public IList<ScoringProfile> ScoringProfiles { get; init; } = new List<ScoringProfile>();
+
+    /// <summary>
+    /// The profile applied when a request names none.
+    /// </summary>
+    /// <remarks>
+    /// Null means unscored relevance, which is the default. A request's own
+    /// <c>scoringProfile</c> overrides this.
+    /// </remarks>
+    public string? DefaultScoringProfile { get; set; }
+
+    /// <summary>
     /// Index properties the emulator does not model, kept verbatim so they survive a
     /// get-modify-put cycle (issue #41).
     /// </summary>
     /// <remarks>
     /// A client that reads an index, changes one field and writes it back would otherwise
-    /// have <c>scoringProfiles</c>, <c>analyzers</c>, <c>corsOptions</c>, <c>similarity</c>,
+    /// have <c>analyzers</c>, <c>corsOptions</c>, <c>similarity</c>,
     /// <c>semantic</c>, <c>vectorSearch</c> and <c>encryptionKey</c> silently deleted from
     /// its own definition — the emulator would be destroying configuration rather than
     /// merely ignoring it. Capturing them here costs nothing and keeps the stored definition
@@ -45,6 +59,16 @@ public class SearchIndex
     /// </summary>
     public SearchSuggester? FindSuggester(string name)
         => Suggesters.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Finds the scoring profile a request named, or null when the index defines none by that
+    /// name (issue #47).
+    /// </summary>
+    /// <remarks>
+    /// Matched case-insensitively, for the same reason <see cref="FindSuggester"/> is.
+    /// </remarks>
+    public ScoringProfile? FindScoringProfile(string name)
+        => ScoringProfiles.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
 
     public SearchField GetKeyField()
     {

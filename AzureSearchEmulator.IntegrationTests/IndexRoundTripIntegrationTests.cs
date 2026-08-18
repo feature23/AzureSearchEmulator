@@ -125,13 +125,17 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
 
     /// <summary>
     /// Documents a known gap rather than a guarantee: the collection listing still serializes
-    /// through OData, which emits only what the EDM model declares, so the preserved properties
-    /// are absent there.
+    /// through OData, which emits only what the EDM model declares, so the properties preserved
+    /// through the extension bag are absent there.
     /// </summary>
     /// <remarks>
     /// Asserted so the boundary is explicit and a future change to the listing endpoint is a
     /// deliberate decision rather than a silent one. If this test starts failing because the
     /// properties now appear, that is an improvement — update the test.
+    ///
+    /// The gap narrowed once already: <c>scoringProfiles</c> was listed here until issue #47
+    /// made it a modelled property, at which point the EDM model began emitting it and it moved
+    /// to the assertions below. Anything still named here is genuinely unmodelled.
     /// </remarks>
     [Fact]
     public async Task ListEndpoint_DoesNotYetIncludeUnmodelledProperties()
@@ -148,9 +152,14 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
             .FirstOrDefault(i => i?["name"]?.GetValue<string>() == indexName);
 
         Assert.NotNull(listed);
-        Assert.Null(listed["scoringProfiles"]);
+        Assert.Null(listed["corsOptions"]);
+        Assert.Null(listed["vectorSearch"]);
+
+        // Modelled since issue #47, so the listing carries it like any other declared property.
+        Assert.NotNull(listed["scoringProfiles"]);
+
         // The individual route is the one that carries the full definition.
-        Assert.NotNull((await GetIndexAsync(client, indexName))["scoringProfiles"]);
+        Assert.NotNull((await GetIndexAsync(client, indexName))["corsOptions"]);
 
         await DeleteIndexAsync(client, indexName);
     }
