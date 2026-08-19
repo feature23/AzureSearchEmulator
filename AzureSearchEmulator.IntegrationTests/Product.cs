@@ -147,3 +147,32 @@ public class Room
 
     public string[] Tags { get; init; } = [];
 }
+
+/// <summary>
+/// A document carrying an embedding, used to exercise vector search (issue #46) end-to-end
+/// through the Azure Search SDK.
+/// </summary>
+/// <remarks>
+/// Going through the SDK is the point. It models <c>VectorSearch</c>, the algorithm
+/// configurations and <c>VectorizedQuery</c> as strongly-typed classes and serializes the
+/// embedding as a <c>Collection(Edm.Single)</c> on the wire, so a definition or a query the
+/// emulator read under a different property name would fail here rather than pass unnoticed.
+///
+/// <see cref="Embedding"/> is a <c>float[]</c> because that is what Azure's
+/// <c>Collection(Edm.Single)</c> maps to; a <c>double[]</c> would serialize as
+/// <c>Collection(Edm.Double)</c> and never reach the vector path at all.
+/// </remarks>
+public class VectorDocument
+{
+    public required string Id { get; init; }
+
+    public required string Title { get; init; }
+
+    public required string Category { get; init; }
+
+    /// <summary>
+    /// Nullable so a document with no embedding can be indexed, covering how a vector query
+    /// treats a document it cannot score.
+    /// </summary>
+    public float[]? Embedding { get; init; }
+}
