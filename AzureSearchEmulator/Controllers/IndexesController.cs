@@ -77,9 +77,11 @@ public class IndexesController(
         {
             await searchIndexRepository.Create(index);
         }
-        catch (SearchIndexExistsException)
+        catch (SearchIndexExistsException ex)
         {
-            return Conflict();
+            // The message names the index; a bare Conflict() left the caller with only the
+            // status code to work from.
+            return Conflict(ex.Message);
         }
 
         return IndexJson(index, StatusCodes.Status201Created);
