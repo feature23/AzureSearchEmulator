@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AzureSearchEmulator;
+using AzureSearchEmulator.ErrorHandling;
 using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
@@ -32,7 +33,13 @@ builder.Services.AddCors(options =>
         });
 });
 
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // Rewrites the controllers' own 4xx results into Azure's error envelope. Registered
+        // as a filter rather than applied at each call site so every existing rejection —
+        // and any added later — carries the shape the SDK reads (issue #40).
+        options.Filters.Add<SearchErrorResultFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -92,9 +99,19 @@ builder.Services.AddSingleton<ISearchIndexer, LuceneNetSearchIndexer>();
 
 var app = builder.Build();
 
+// Outermost, so it also covers the model binding and OData formatter work that runs before a
+// controller action is reached (issue #40).
+//
+// This deliberately replaces UseDeveloperExceptionPage rather than sitting behind it. That
+// page renders HTML, so with it in front every fault in Development came back as a stack-trace
+// document instead of the error envelope — meaning the shape a client saw depended on which
+// environment the emulator happened to run in, and the tests here exercise a container that
+// does not run in Development. An emulator is only useful if it answers the same way
+// everywhere; the stack trace is still written to the log by the handler itself.
+app.UseMiddleware<SearchErrorMiddleware>();
+
 if (builder.Environment.IsDevelopment())
 {
-    app.UseDeveloperExceptionPage();
     // Route debug lists every registered endpoint at /$odata, which is a development aid and
     // not something a deployed emulator should expose.
     app.UseODataRouteDebug();
