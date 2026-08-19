@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -265,9 +266,17 @@ public enum VectorSearchAlgorithmKind
 }
 
 /// <summary>
-/// The similarity metrics Azure accepts.
+/// The similarity metrics Azure accepts for a <c>Collection(Edm.Single)</c> field.
 /// </summary>
-[JsonConverter(typeof(CamelCaseEnumConverter<VectorSearchMetric>))]
+/// <remarks>
+/// Azure's metric enum has a fourth value, <c>hamming</c>, which its specification restricts to
+/// bit-packed binary data — a <c>Collection(Edm.Byte)</c> field declaring
+/// <c>vectorEncoding: "packedBit"</c>. The emulator does not support that element type, so a
+/// metric only usable with it would have nothing to apply to; it is left out rather than
+/// accepted and quietly treated as something else. <see cref="VectorSearchJson"/> reports it
+/// as unsupported rather than unrecognized, so the message names the real reason.
+/// </remarks>
+[JsonConverter(typeof(VectorSearchMetricConverter))]
 public enum VectorSearchMetric
 {
     /// <summary>
@@ -284,4 +293,56 @@ public enum VectorSearchMetric
     /// Dot product, which equals cosine similarity for normalized vectors.
     /// </summary>
     DotProduct
+}
+
+/// <summary>
+/// Reads and writes <see cref="VectorSearchMetric"/>, distinguishing a metric the emulator does
+/// not support from one that does not exist.
+/// </summary>
+/// <remarks>
+/// <c>hamming</c> is a real Azure metric, so reporting it the way a typo is reported — "not a
+/// valid metric; expected one of cosine, euclidean, dotProduct" — would send someone looking for
+/// a spelling mistake in a value they had spelled correctly. It is unsupported here because the
+/// bit-packed binary element type it applies to is unsupported, and the message says so.
+/// </remarks>
+public class VectorSearchMetricConverter : JsonConverter<VectorSearchMetric>
+{
+    /// <summary>
+    /// The metric Azure defines for bit-packed binary vectors, which the emulator has no element
+    /// type to use it with.
+    /// </summary>
+    private const string HammingMetric = "hamming";
+
+    public override VectorSearchMetric Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        var value = reader.GetString();
+
+        if (string.Equals(value, HammingMetric, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new JsonException(
+                "The 'hamming' metric applies only to bit-packed binary vectors, which are not " +
+                "supported. Use cosine, euclidean or dotProduct with a " +
+                "Collection(Edm.Single) field.");
+        }
+
+        if (value != null && Enum.TryParse<VectorSearchMetric>(value, ignoreCase: true, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new JsonException(
+            $"'{value}' is not a valid vector search metric; expected one of " +
+            $"{string.Join(", ", Enum.GetNames<VectorSearchMetric>().Select(ToCamelCase))}.");
+    }
+
+    public override void Write(Utf8JsonWriter writer, VectorSearchMetric value, JsonSerializerOptions options)
+        => writer.WriteStringValue(ToCamelCase(value.ToString()));
+
+    private static string ToCamelCase(string name)
+        => string.IsNullOrEmpty(name)
+            ? name
+            : char.ToLower(name[0], CultureInfo.InvariantCulture) + name[1..];
 }

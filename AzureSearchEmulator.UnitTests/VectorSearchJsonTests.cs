@@ -312,6 +312,34 @@ public class VectorSearchJsonTests
     }
 
     /// <summary>
+    /// <c>hamming</c> is a real Azure metric, restricted by its specification to bit-packed
+    /// binary vectors — an element type the emulator does not support. Reporting it the way a
+    /// typo is reported would send someone hunting for a spelling mistake in a value they spelled
+    /// correctly, so the message names the actual reason.
+    /// </summary>
+    [Fact]
+    public void HammingMetric_IsReportedAsUnsupportedRatherThanUnrecognized()
+    {
+        const string json =
+            """
+            {
+              "name": "vectors",
+              "fields": [{ "name": "id", "type": "Edm.String", "key": true }],
+              "vectorSearch": {
+                "algorithms": [
+                  { "name": "a", "kind": "hnsw", "hnswParameters": { "metric": "hamming" } }
+                ]
+              }
+            }
+            """;
+
+        var ex = Assert.Throws<JsonException>(() => Deserialize(json));
+
+        Assert.Contains("bit-packed binary", ex.Message);
+        Assert.DoesNotContain("is not a valid", ex.Message);
+    }
+
+    /// <summary>
     /// Azure spells these camelCase, and a metric written any other way would not be understood
     /// by the SDK reading the definition back.
     /// </summary>

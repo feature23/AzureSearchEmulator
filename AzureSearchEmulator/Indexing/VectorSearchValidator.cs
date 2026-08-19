@@ -138,10 +138,12 @@ public static class VectorSearchValidator
             return $"Vector field '{path}' must declare dimensions.";
         }
 
-        if (dimensions < 1 || dimensions > VectorSearchSupport.MaxDimensions)
+        if (dimensions < VectorSearchSupport.MinDimensions
+            || dimensions > VectorSearchSupport.MaxDimensions)
         {
             return $"Vector field '{path}' declares {dimensions} dimensions, which must be " +
-                   $"between 1 and {VectorSearchSupport.MaxDimensions}.";
+                   $"between {VectorSearchSupport.MinDimensions} and " +
+                   $"{VectorSearchSupport.MaxDimensions}.";
         }
 
         if (string.IsNullOrWhiteSpace(field.VectorSearchProfile))
@@ -158,14 +160,22 @@ public static class VectorSearchValidator
         }
 
         // A vector is not a term, so none of the term-based capabilities can apply to it. Azure
-        // refuses these rather than ignoring them, and so does the emulator: silently dropping
-        // a sortable flag would leave an $orderby that never takes effect.
+        // documents that filterable, sortable and facetable must all be false on a vector field,
+        // and refuses the definition otherwise. The emulator refuses two of the three, for the
+        // same reason: silently dropping a sortable flag would leave an $orderby that never
+        // takes effect.
         //
-        // filterable is deliberately not checked. It defaults to true on this model — a
-        // divergence from Azure, where it defaults to false — so rejecting it would reject
-        // every vector field that did not explicitly turn it off, including definitions the
-        // service accepts. The flag has no effect on a vector field either way, because the
-        // vector is never written as an indexed term for a filter to match.
+        // filterable is the exception, and not for want of trying. This model declares it as a
+        // non-nullable bool defaulting to true — a pre-existing divergence from Azure, where an
+        // absent flag means false — so an omitted filterable and an explicit "filterable": true
+        // are indistinguishable by the time validation sees them. The Azure SDK omits the flag
+        // entirely when it writes a vector field, so refusing true here would refuse every
+        // definition the SDK produces. Telling the two apart means making the property nullable,
+        // which changes how every other field type is read and belongs in its own change rather
+        // than smuggled in with vector search.
+        //
+        // Accepting it costs nothing in behaviour: the vector is never written as an indexed
+        // term, so no filter can match it either way.
         if (field.Sortable.GetValueOrDefault())
         {
             return $"Vector field '{path}' cannot be sortable.";

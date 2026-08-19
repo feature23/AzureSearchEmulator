@@ -288,6 +288,10 @@ get-modify-put unchanged. The one exception is a **profile-level `vectorizer`**,
 rejected outright rather than kept: it would make the emulator accept an index whose queries
 it must then refuse, and saying so at create time points at the profile responsible.
 
+`dimensions` must be between 2 and 4096, the bounds the Azure REST specification sets. The
+`hamming` metric is not supported: Azure restricts it to bit-packed binary vectors, an element
+type the emulator does not implement.
+
 A document whose vector length does not match the field's `dimensions` is rejected with a
 400, as in Azure Search, without failing the rest of the batch. `dimensions` cannot be
 changed once the index exists.

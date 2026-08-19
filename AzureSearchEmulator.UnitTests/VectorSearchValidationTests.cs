@@ -86,9 +86,16 @@ public class VectorSearchValidationTests
         Assert.Contains("embedding", error);
     }
 
+    /// <summary>
+    /// The bounds the Azure REST specification puts on a field's <c>dimensions</c>: a minimum of
+    /// 2 and a maximum of 4096. One is rejected as well as zero — a one-dimensional vector is a
+    /// scalar with extra steps, and every metric degenerates on it, so the service has never
+    /// allowed one.
+    /// </summary>
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
+    [InlineData(1)]
     [InlineData(4097)]
     public void VectorField_WithDimensionsOutOfRange_IsRejected(int dimensions)
     {
@@ -100,7 +107,7 @@ public class VectorSearchValidationTests
     }
 
     [Theory]
-    [InlineData(1)]
+    [InlineData(2)]
     [InlineData(1536)]
     [InlineData(4096)]
     public void VectorField_WithDimensionsInRange_IsAccepted(int dimensions)

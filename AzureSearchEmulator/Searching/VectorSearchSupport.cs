@@ -50,13 +50,23 @@ public static class VectorSearchSupport
     public const string VectorFieldType = "Collection(Edm.Single)";
 
     /// <summary>
+    /// The smallest vector the emulator accepts.
+    /// </summary>
+    /// <remarks>
+    /// Two, not one, matching the <c>minimum</c> the Azure REST specification puts on a field's
+    /// <c>dimensions</c>. A one-dimensional vector is a scalar with extra steps — every metric
+    /// degenerates on it — so the service has never allowed one.
+    /// </remarks>
+    public const int MinDimensions = 2;
+
+    /// <summary>
     /// The largest vector the emulator accepts.
     /// </summary>
     /// <remarks>
-    /// Azure's own ceiling for <c>Collection(Edm.Single)</c> is 4096 at the time of writing.
-    /// Matching it keeps a definition that the service would reject from being accepted here,
-    /// which is the direction of error an emulator should prefer: a test that passes locally
-    /// and fails against the service is worse than the reverse.
+    /// The <c>maximum</c> the Azure REST specification puts on <c>dimensions</c>. Matching both
+    /// bounds keeps a definition the service would reject from being accepted here, which is the
+    /// direction of error an emulator should prefer: a test that passes locally and fails
+    /// against the service is worse than the reverse.
     /// </remarks>
     public const int MaxDimensions = 4096;
 
