@@ -43,7 +43,10 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
           ],
           "corsOptions": { "allowedOrigins": ["*"], "maxAgeInSeconds": 300 },
           "similarity": { "@odata.type": "#Microsoft.Azure.Search.BM25Similarity", "k1": 1.2, "b": 0.75 },
-          "vectorSearch": { "profiles": [{ "name": "vp", "algorithm": "hnsw" }] },
+          "vectorSearch": {
+            "algorithms": [{ "name": "hnswAlgo", "kind": "hnsw" }],
+            "profiles": [{ "name": "vp", "algorithm": "hnswAlgo" }]
+          },
           "encryptionKey": { "keyVaultKeyName": "k", "keyVaultUri": "https://example.vault.azure.net" }
         }
         """;
@@ -60,7 +63,7 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
 
         Assert.Equal(2.5, stored["scoringProfiles"]?[0]?["text"]?["weights"]?["description"]?.GetValue<double>());
         Assert.Equal(300, stored["corsOptions"]?["maxAgeInSeconds"]?.GetValue<int>());
-        Assert.Equal("hnsw", stored["vectorSearch"]?["profiles"]?[0]?["algorithm"]?.GetValue<string>());
+        Assert.Equal("hnswAlgo", stored["vectorSearch"]?["profiles"]?[0]?["algorithm"]?.GetValue<string>());
         Assert.Equal("k", stored["encryptionKey"]?["keyVaultKeyName"]?.GetValue<string>());
         Assert.Equal("#Microsoft.Azure.Search.BM25Similarity",
             stored["similarity"]?["@odata.type"]?.GetValue<string>());
@@ -115,7 +118,7 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
 
         Assert.Contains(stored["fields"]!.AsArray(), i => i?["name"]?.GetValue<string>() == "rating");
         Assert.Equal(2.5, stored["scoringProfiles"]?[0]?["text"]?["weights"]?["description"]?.GetValue<double>());
-        Assert.Equal("hnsw", stored["vectorSearch"]?["profiles"]?[0]?["algorithm"]?.GetValue<string>());
+        Assert.Equal("hnswAlgo", stored["vectorSearch"]?["profiles"]?[0]?["algorithm"]?.GetValue<string>());
         var embedding = stored["fields"]?.AsArray()
             .FirstOrDefault(i => i?["name"]?.GetValue<string>() == "embedding");
         Assert.Equal(1536, embedding?["dimensions"]?.GetValue<int>());
@@ -133,9 +136,10 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
     /// deliberate decision rather than a silent one. If this test starts failing because the
     /// properties now appear, that is an improvement — update the test.
     ///
-    /// The gap narrowed once already: <c>scoringProfiles</c> was listed here until issue #47
-    /// made it a modelled property, at which point the EDM model began emitting it and it moved
-    /// to the assertions below. Anything still named here is genuinely unmodelled.
+    /// The gap has narrowed twice: <c>scoringProfiles</c> was listed here until issue #47 made
+    /// it a modelled property, and <c>vectorSearch</c> until issue #46 did the same. In both
+    /// cases the EDM model began emitting it and it moved to the assertions below. Anything
+    /// still named here is genuinely unmodelled.
     /// </remarks>
     [Fact]
     public async Task ListEndpoint_DoesNotYetIncludeUnmodelledProperties()
@@ -153,10 +157,11 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
 
         Assert.NotNull(listed);
         Assert.Null(listed["corsOptions"]);
-        Assert.Null(listed["vectorSearch"]);
 
-        // Modelled since issue #47, so the listing carries it like any other declared property.
+        // Modelled since issues #47 and #46, so the listing carries them like any other
+        // declared property.
         Assert.NotNull(listed["scoringProfiles"]);
+        Assert.NotNull(listed["vectorSearch"]);
 
         // The individual route is the one that carries the full definition.
         Assert.NotNull((await GetIndexAsync(client, indexName))["corsOptions"]);
