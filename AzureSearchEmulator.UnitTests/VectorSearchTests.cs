@@ -433,26 +433,26 @@ public class VectorSearchTests : IDisposable
     }
 
     /// <summary>
-    /// Several vector queries take a document's best score, not the sum, and a document is not
-    /// penalized for lacking a field the query named.
+    /// Several vector queries are fused by rank, so a document every arm rates outranks one that
+    /// a single arm rates perfectly.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A BooleanQuery of SHOULD clauses gets both of these wrong: it sums the matching clauses
-    /// and, with coordination on, scales each document by the fraction it matched. A perfect
-    /// match on one field with no vector for the other came back as 0.5, outranked by a mediocre
-    /// match on both that summed to 1.43 — outside the range a similarity is documented to
-    /// occupy, and the wrong order.
+    /// This supersedes the best-of-the-arms rule that applied before fusion existed, and the
+    /// change is deliberate rather than a regression: rewarding a document for placing well in
+    /// several arms is what Reciprocal Rank Fusion is for. What carries over unchanged is the
+    /// part that was actually broken before — a document is not penalized for lacking a field
+    /// the query named, and no score is summed past what the arms can produce.
     /// </para>
     /// <para>
-    /// This asserts the score a similarity produces, so it belongs to the phase that produces
-    /// one. Once several arms are fused by rank the score is rank-derived and a document rated
-    /// by every arm deliberately outranks one rated by a single arm, however perfectly — that is
-    /// what fusion is for, and HybridSearchTests covers it there.
+    /// The arithmetic is worth spelling out, because the obvious guess is wrong. Arm A ranks
+    /// <c>onlyA</c> first (an exact match) and <c>bothMid</c> second; arm B holds only
+    /// <c>bothMid</c>, which is therefore first. So <c>bothMid</c> scores
+    /// <c>1/62 + 1/61</c> — not <c>2/61</c>, which would need it to be first in both.
     /// </para>
     /// </remarks>
     [Fact]
-    public async Task SeveralVectorQueries_TakeTheBestScoreRatherThanTheSum()
+    public async Task SeveralVectorQueries_AreFusedByRank()
     {
         var index = CreateTwoFieldIndex();
 
@@ -460,7 +460,7 @@ public class VectorSearchTests : IDisposable
         [
             // Exactly the query vector on A, and no vector for B at all.
             new UploadIndexDocumentAction(TwoFieldDoc("onlyA", [1f, 0f, 0f], null)),
-            // A middling match on both fields.
+            // A middling match, but on both fields.
             new UploadIndexDocumentAction(TwoFieldDoc("bothMid", [0.6f, 0.8f, 0f], [0.6f, 0.8f, 0f])),
         ]);
         Assert.All(result.Value, r => Assert.True(r.Status, r.ErrorMessage));
@@ -478,12 +478,12 @@ public class VectorSearchTests : IDisposable
             i => i["Id"]!.GetValue<string>(),
             i => i["@search.score"]!.GetValue<float>());
 
-        // The perfect match keeps its perfect score and comes first: it is not halved for
-        // lacking a field the query named, and nothing is summed past what a similarity can
-        // reach.
-        Assert.Equal(1f, scores["onlyA"], 5);
-        Assert.Equal("onlyA", Ids(response)[0]);
-        Assert.All(scores.Values, score => Assert.InRange(score, 0f, 1f));
+        // Second in arm A and first in arm B beats first in arm A and absent from arm B.
+        Assert.Equal("bothMid", Ids(response)[0]);
+        Assert.Equal(1f / 62f + 1f / 61f, scores["bothMid"], 6);
+
+        // Present in one arm only, so exactly one term — not halved for the field it lacks.
+        Assert.Equal(1f / 61f, scores["onlyA"], 6);
     }
 
     /// <summary>

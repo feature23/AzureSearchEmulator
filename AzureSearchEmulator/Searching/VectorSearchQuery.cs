@@ -34,33 +34,48 @@ namespace AzureSearchEmulator.Searching;
 /// </remarks>
 public class VectorSearchQuery : Query
 {
-    private readonly IReadOnlyList<string> _paths;
+    private readonly string _path;
     private readonly float[] _vector;
     private readonly VectorSearchMetric _metric;
     private readonly int _k;
     private readonly Filter? _preFilter;
 
-    /// <param name="paths">
-    /// The vector fields to search. A document is scored on its best field, matching how Azure
-    /// treats a query naming several.
+    /// <param name="path">
+    /// The vector field to search. One field per query: Azure counts each field of a vector
+    /// query as its own query execution, and a hybrid query fuses one ranked list per field, so
+    /// a query naming several fields is built as several of these.
     /// </param>
     /// <param name="preFilter">
     /// Restricts which documents the scan considers, implementing <c>vectorFilterMode:
     /// preFilter</c>. Null scans everything.
     /// </param>
     public VectorSearchQuery(
-        IReadOnlyList<string> paths,
+        string path,
         float[] vector,
         VectorSearchMetric metric,
         int k,
         Filter? preFilter = null)
     {
-        _paths = paths;
+        _path = path;
         _vector = vector;
         _metric = metric;
         _k = k;
         _preFilter = preFilter;
     }
+
+    /// <summary>
+    /// The field this query searches.
+    /// </summary>
+    public string Path => _path;
+
+    /// <summary>
+    /// The weight this arm carries into a hybrid fusion.
+    /// </summary>
+    /// <remarks>
+    /// Held here rather than passed to the fusion separately so that a query and its weight
+    /// cannot drift apart when several are built from one request.
+    /// </remarks>
+    public float Weight { get; init; } = 1f;
 
     public override Query Rewrite(IndexReader reader)
     {
@@ -77,6 +92,22 @@ public class VectorSearchQuery : Query
 
         return query;
     }
+
+    /// <summary>
+    /// Runs the scan and returns the nearest documents in rank order, best first.
+    /// </summary>
+    /// <remarks>
+    /// What a hybrid query fuses on. Reciprocal Rank Fusion consumes positions rather than
+    /// scores, so this hands back the ordering and discards the similarities that produced it.
+    /// </remarks>
+    public IReadOnlyList<int> GetRankedDocIds(IndexReader reader)
+        => FindNearest(reader)
+            .OrderByDescending(i => i.Value)
+            // Ties broken by document id so a fused ranking is reproducible; see
+            // ReciprocalRankFusion for why the emulator picks a rule where Azure documents none.
+            .ThenBy(i => i.Key)
+            .Select(i => i.Key)
+            .ToList();
 
     /// <summary>
     /// Scans every candidate document and returns the best <paramref name="_k"/>, keyed by
@@ -113,14 +144,11 @@ public class VectorSearchQuery : Query
                 continue;
             }
 
-            var readers = _paths
-                .Select(path => atomicReader.GetBinaryDocValues(
-                    VectorSearchSupport.GetVectorDocValuesFieldName(path)))
-                .Where(i => i != null)
-                .ToList();
+            var docValues = atomicReader.GetBinaryDocValues(
+                VectorSearchSupport.GetVectorDocValuesFieldName(_path));
 
-            // None of the named fields exists in this segment, so no document in it can match.
-            if (readers.Count == 0)
+            // The field does not exist in this segment, so no document in it can match.
+            if (docValues == null)
             {
                 continue;
             }
@@ -158,7 +186,7 @@ public class VectorSearchQuery : Query
                     continue;
                 }
 
-                if (!TryScore(readers, doc, buffer, bytes, out var score))
+                if (!TryScore(docValues, doc, buffer, bytes, out var score))
                 {
                     continue;
                 }
@@ -188,12 +216,12 @@ public class VectorSearchQuery : Query
     }
 
     /// <summary>
-    /// Scores one document against the query vector, taking its best field.
+    /// Scores one document against the query vector.
     /// </summary>
     /// <remarks>
-    /// Returns false for a document that holds no vector for any of the named fields. Azure
-    /// leaves such a document out of the results rather than ranking it last, since it has no
-    /// similarity to the query at all — absence is not distance.
+    /// Returns false for a document holding no vector for this field. Azure leaves such a
+    /// document out of the results rather than ranking it last, since it has no similarity to
+    /// the query at all — absence is not distance.
     ///
     /// A stored vector of the wrong length is also skipped rather than reported. Validation
     /// refuses a mismatched vector at upload and a mismatched query vector before the scan, so
@@ -202,42 +230,32 @@ public class VectorSearchQuery : Query
     /// would be a worse answer than omitting it.
     /// </remarks>
     private bool TryScore(
-        List<BinaryDocValues> readers,
+        BinaryDocValues docValues,
         int doc,
         float[] buffer,
         BytesRef bytes,
         out float score)
     {
-        score = float.NegativeInfinity;
-        var found = false;
+        score = 0f;
 
-        foreach (var reader in readers)
+        docValues.Get(doc, bytes);
+
+        if (bytes.Length == 0 || bytes.Length != buffer.Length * sizeof(float))
         {
-            reader.Get(doc, bytes);
-
-            if (bytes.Length == 0 || bytes.Length != buffer.Length * sizeof(float))
-            {
-                continue;
-            }
-
-            VectorSearchSupport.UnpackVector(bytes.Bytes.AsSpan(bytes.Offset, bytes.Length), buffer);
-
-            var candidate = VectorSimilarity.GetScore(
-                _metric,
-                VectorSimilarity.GetSimilarity(_metric, buffer, _vector));
-
-            if (!found || candidate > score)
-            {
-                score = candidate;
-                found = true;
-            }
+            return false;
         }
 
-        return found;
+        VectorSearchSupport.UnpackVector(bytes.Bytes.AsSpan(bytes.Offset, bytes.Length), buffer);
+
+        score = VectorSimilarity.GetScore(
+            _metric,
+            VectorSimilarity.GetSimilarity(_metric, buffer, _vector));
+
+        return true;
     }
 
     public override string ToString(string field)
-        => $"vector({string.Join(",", _paths)}, k={_k}, metric={_metric})";
+        => $"vector({_path}, k={_k}, metric={_metric})";
 
     /// <remarks>
     /// The query vector participates in identity: two queries over the same field with
@@ -246,10 +264,11 @@ public class VectorSearchQuery : Query
     /// </remarks>
     public override bool Equals(object? obj)
         => obj is VectorSearchQuery other
-           && _paths.SequenceEqual(other._paths)
+           && _path == other._path
            && _vector.AsSpan().SequenceEqual(other._vector)
            && _metric == other._metric
            && _k == other._k
+           && Weight.Equals(other.Weight)
            && Equals(_preFilter, other._preFilter)
            && Boost.Equals(other.Boost);
 
@@ -257,10 +276,7 @@ public class VectorSearchQuery : Query
     {
         var hash = new HashCode();
 
-        foreach (var path in _paths)
-        {
-            hash.Add(path);
-        }
+        hash.Add(_path);
 
         foreach (var component in _vector)
         {
@@ -269,6 +285,7 @@ public class VectorSearchQuery : Query
 
         hash.Add(_metric);
         hash.Add(_k);
+        hash.Add(Weight);
         hash.Add(Boost);
 
         // Equals distinguishes two queries by their pre-filter, so the hash has to move when the

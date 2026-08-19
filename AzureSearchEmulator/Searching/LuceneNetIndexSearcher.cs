@@ -101,7 +101,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         var sort = GetSortFromRequest(index, request);
 
-        var highlighter = GetHighlighterFromRequest(index, request, query);
+        // Built from the text arm rather than the fused query: a hybrid query rewrites into a
+        // set of document ids, which carries no terms for the highlighter to score against
+        // (issue #46).
+        var highlighter = GetHighlighterFromRequest(
+            index,
+            request,
+            query is HybridSearchQuery hybrid ? hybrid.TextQuery : query);
 
         var selection = FieldSelection.Parse(index, request.Select);
 
@@ -331,9 +337,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
     private static double? GetSuggesterCoverage(double? minimumCoverage)
         => minimumCoverage == null ? null : SearchCoverage.Full;
 
-    private static HitHighlighter? GetHighlighterFromRequest(SearchIndex index, SearchRequest request, Query query)
+    /// <param name="query">
+    /// The query whose terms a highlight is scored against, or null when the request has no text
+    /// query for a highlight to be about — a vector-only search, where there is nothing to mark.
+    /// </param>
+    private static HitHighlighter? GetHighlighterFromRequest(SearchIndex index, SearchRequest request, Query? query)
     {
-        if (string.IsNullOrEmpty(request.Highlight))
+        if (string.IsNullOrEmpty(request.Highlight) || query == null)
         {
             return null;
         }
@@ -619,8 +629,10 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         DateTimeOffset now,
         Filter? filter)
     {
+        var preFilter = GetVectorPreFilter(request, filter);
+
         var vectorQueries = VectorQuerySupport.HasVectorQueries(request)
-            ? VectorQuerySupport.BuildQueries(index, request, GetVectorPreFilter(request, filter))
+            ? VectorQuerySupport.BuildQueries(index, request, preFilter)
             : [];
 
         var query = GetBaseQueryFromRequest(index, request, profile, vectorQueries.Count > 0);
@@ -630,7 +642,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             query = ScoringProfileQuery.Wrap(query, index, profile, parameters, now);
         }
 
-        return VectorQuerySupport.Combine(query, vectorQueries, request);
+        return VectorQuerySupport.Combine(query, vectorQueries, preFilter);
     }
 
     /// <summary>

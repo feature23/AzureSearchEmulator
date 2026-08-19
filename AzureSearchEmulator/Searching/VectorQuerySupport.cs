@@ -26,12 +26,16 @@ public static class VectorQuerySupport
     public const int DefaultK = 50;
 
     /// <summary>
-    /// Why a hybrid request is refused, shared by the two places that refuse it.
+    /// How many documents the text arm of a hybrid query contributes to the fusion.
     /// </summary>
-    private const string HybridUnsupportedMessage =
-        "Hybrid search — combining 'search' with 'vectorQueries' — is not supported yet. " +
-        "Azure fuses the two result sets with Reciprocal Rank Fusion, which this build does " +
-        "not implement. Send the text query and the vector query separately.";
+    /// <remarks>
+    /// Azure calls this <c>maxTextRecallSize</c> and defaults it to 1000, far above the default
+    /// page size. The fusion needs enough of each arm's ranking to find the documents the arms
+    /// agree on: a document the text arm ranks 200th can still finish near the top once a
+    /// vector arm's opinion is added, and it could not if the text arm only offered its first
+    /// 50.
+    /// </remarks>
+    public const int DefaultTextRecallSize = 1000;
 
     /// <summary>
     /// True when the request asks for vector search at all.
@@ -71,13 +75,6 @@ public static class VectorQuerySupport
         }
 
         BuildQueries(index, request, preFilter: null);
-
-        // Checked here rather than in Combine so that it is reported before the reader is
-        // opened, like the rest of these.
-        if (HasTextQuery(request))
-        {
-            throw new InvalidOperationException(HybridUnsupportedMessage);
-        }
     }
 
     /// <summary>
@@ -91,16 +88,16 @@ public static class VectorQuerySupport
     /// The request asks for something the emulator cannot answer, or names something the index
     /// does not define. The controller turns this into a 400.
     /// </exception>
-    public static IReadOnlyList<Query> BuildQueries(
+    public static IReadOnlyList<VectorSearchQuery> BuildQueries(
         SearchIndex index,
         SearchRequest request,
         Filter? preFilter)
     {
-        var queries = new List<Query>();
+        var queries = new List<VectorSearchQuery>();
 
         foreach (var vectorQuery in request.VectorQueries ?? [])
         {
-            queries.Add(BuildQuery(index, vectorQuery, preFilter));
+            queries.AddRange(BuildQuery(index, vectorQuery, preFilter));
         }
 
         return queries;
@@ -112,62 +109,55 @@ public static class VectorQuerySupport
     /// <remarks>
     /// <para>
     /// With no vector queries this is the text query untouched, which is every request that
-    /// predates this feature.
+    /// predates this feature. With exactly one vector query and no text query it is that query,
+    /// scored by similarity — the pure vector search of phase 2.
     /// </para>
     /// <para>
-    /// With vector queries and no text query — the pure vector search this phase implements —
-    /// a document near the query vector in any of them matches, and its score is the best of
-    /// them rather than the sum.
+    /// Anything else is a fusion. That covers the obvious hybrid case, a text query alongside
+    /// vector queries, but also a vector-only request with more than one arm: two vector fields
+    /// produce two rankings, and those are no more comparable to each other than a vector
+    /// ranking is to a text one when the fields are bound to different profiles. Azure fuses
+    /// both cases the same way, so the emulator does too.
     /// </para>
     /// <para>
-    /// That best-of is why this is a <see cref="DisjunctionMaxQuery"/> and not a
-    /// <see cref="BooleanQuery"/> of <see cref="Occur.SHOULD"/> clauses. Lucene sums the scores
-    /// of matching SHOULD clauses and, with coordination enabled, scales each document by the
-    /// fraction of clauses it matched — so a document with a perfect match on one field and no
-    /// vector for another is halved to 0.5, while a mediocre match on both sums past 1.0 and
-    /// outranks it. Both are wrong: a similarity is not additive, and a document is not a worse
-    /// match for lacking a field the query happened to name. Taking the maximum keeps the score
-    /// inside the range <see cref="VectorSimilarity"/> documents and matches the best-field rule
-    /// already applied within a single query.
-    /// </para>
-    /// <para>
-    /// A request combining <c>search</c> with <c>vectorQueries</c> is a hybrid search, which
-    /// Azure answers by fusing the two rankings with Reciprocal Rank Fusion. RRF is not
-    /// implemented yet, and a union would not approximate it — the two arms produce scores on
-    /// unrelated scales, so whichever happened to score higher would dominate the ranking
-    /// regardless of rank. Refusing is the honest answer until the fusion exists.
+    /// Note what fusion replaces: a <see cref="BooleanQuery"/> union of the arms. Lucene sums
+    /// the scores of matching <see cref="Occur.SHOULD"/> clauses and, with coordination enabled,
+    /// scales each document by the fraction of clauses it matched — so a document with a perfect
+    /// match on one field and no vector for another is halved to 0.5, while a mediocre match on
+    /// both sums past 1.0 and outranks it. Both are wrong: a similarity is not additive, and a
+    /// document is not a worse match for lacking a field the query happened to name. Fusing on
+    /// rank sidesteps the arithmetic entirely.
     /// </para>
     /// </remarks>
-    public static Query? Combine(Query? textQuery, IReadOnlyList<Query> vectorQueries, SearchRequest request)
+    /// <param name="preFilter">
+    /// The filter the arms rank within, or null under <c>postFilter</c>. Passed to the fusion so
+    /// the text arm narrows its window the same way the vector arms narrow their scan.
+    /// </param>
+    public static Query? Combine(
+        Query? textQuery,
+        IReadOnlyList<VectorSearchQuery> vectorQueries,
+        Filter? preFilter)
     {
         if (vectorQueries.Count == 0)
         {
             return textQuery;
         }
 
-        if (textQuery != null)
-        {
-            throw new InvalidOperationException(HybridUnsupportedMessage);
-        }
-
-        if (vectorQueries.Count == 1)
+        // A single vector arm has nothing to fuse with, and fusing it with itself would replace
+        // the similarity score with a rank-derived one for no gain — so the raw similarity is
+        // kept, which is what a caller inspecting @search.score on a pure vector query expects.
+        if (textQuery == null && vectorQueries.Count == 1)
         {
             return vectorQueries[0];
         }
 
-        // tieBreakerMultiplier of 0 takes the maximum outright, with no contribution from the
-        // other matching queries — the best-field semantics described above.
-        var combined = new DisjunctionMaxQuery(0f);
-
-        foreach (var query in vectorQueries)
-        {
-            combined.Add(query);
-        }
-
-        return combined;
+        return new HybridSearchQuery(textQuery, vectorQueries, preFilter);
     }
 
-    private static Query BuildQuery(SearchIndex index, VectorQuery query, Filter? preFilter)
+    private static IReadOnlyList<VectorSearchQuery> BuildQuery(
+        SearchIndex index,
+        VectorQuery query,
+        Filter? preFilter)
     {
         // Refused rather than answered wrongly: a text query needs a hosted embedding model,
         // and there is no way to approximate one that would not silently return the wrong
@@ -214,7 +204,23 @@ public static class VectorQuerySupport
                 $"A vector query's k must be at least 1, but was {k}.");
         }
 
-        return new VectorSearchQuery(paths, [.. query.Vector], metric, k, preFilter);
+        var weight = query.Weight ?? 1f;
+
+        if (weight <= 0 || !float.IsFinite(weight))
+        {
+            throw new InvalidOperationException(
+                $"A vector query's weight must be a positive number, but was {weight}.");
+        }
+
+        var vector = query.Vector.ToArray();
+
+        // One query per field rather than one per vector query. Azure counts each field as its
+        // own query execution — its documentation works the arithmetic through explicitly, a
+        // text query plus two vector queries over five fields being eleven executions — and a
+        // hybrid search fuses one ranked list per execution. Building them separately is what
+        // lets each contribute its own term to the fusion.
+        return [.. paths.Select(path =>
+            new VectorSearchQuery(path, vector, metric, k, preFilter) { Weight = weight })];
     }
 
     /// <summary>
@@ -296,7 +302,11 @@ public static class VectorQuerySupport
             }
 
             resolved = metric;
-            resolvedPath = path;
+
+            // Only the first field is remembered: it is the one that established the metric, and
+            // reassigning each time would make the message name the previous field rather than
+            // the one the mismatch is measured against.
+            resolvedPath ??= path;
         }
 
         return resolved ?? VectorSearchMetric.Cosine;

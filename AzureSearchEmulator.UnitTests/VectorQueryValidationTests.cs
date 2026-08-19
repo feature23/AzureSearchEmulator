@@ -214,12 +214,11 @@ public class VectorQueryValidationTests
     }
 
     /// <summary>
-    /// Hybrid search needs Reciprocal Rank Fusion, which is not implemented. A union of the two
-    /// arms would not approximate it — their scores are on unrelated scales — so the request is
-    /// refused rather than answered with a ranking Azure would not produce.
+    /// Hybrid search is answered by fusing the arms with Reciprocal Rank Fusion, so a request
+    /// combining the two is valid.
     /// </summary>
     [Fact]
-    public void HybridSearch_IsRejected()
+    public void HybridSearch_IsAccepted()
     {
         var request = Request(new VectorQuery
         {
@@ -229,9 +228,23 @@ public class VectorQueryValidationTests
         });
         request.Search = "hello";
 
-        var message = Validate(CreateIndex(), request);
+        VectorQuerySupport.Validate(CreateIndex(), request);
+    }
 
-        Assert.Contains("Reciprocal Rank Fusion", message);
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(-1f)]
+    public void NonPositiveWeight_IsRejected(float weight)
+    {
+        var message = Validate(CreateIndex(), Request(new VectorQuery
+        {
+            Kind = "vector",
+            Vector = [1f, 2f, 3f],
+            Fields = "Embedding",
+            Weight = weight
+        }));
+
+        Assert.Contains("weight", message);
     }
 
     /// <summary>

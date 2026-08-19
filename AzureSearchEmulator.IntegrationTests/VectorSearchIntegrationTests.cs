@@ -359,26 +359,114 @@ public class VectorSearchIntegrationTests(EmulatorFactory factory)
     }
 
     /// <summary>
-    /// Hybrid search is not implemented: Azure fuses the two rankings with Reciprocal Rank
-    /// Fusion, and a union would rank on scores from unrelated scales. Refusing is the honest
-    /// answer, and refusing with a 400 is what a caller can act on.
+    /// A hybrid query — text and vector together — is fused with Reciprocal Rank Fusion, so a
+    /// document both arms rate well outranks one that a single arm rates best.
     /// </summary>
+    /// <remarks>
+    /// The documents are arranged so the arms disagree, because agreement proves nothing: any
+    /// combination strategy ranks a document both arms love at the top. <c>vectoronly</c> is
+    /// identical to the query vector but matches no text; <c>textonly</c> matches the text and
+    /// points away from the vector; <c>both</c> matches the text and is second-nearest. Neither
+    /// arm ranks <c>both</c> first.
+    /// </remarks>
     [Fact]
-    public async Task HybridSearch_IsRejectedWithBadRequest()
+    public async Task HybridSearch_FusesTheArmsWithRrf()
     {
         const string indexName = "test-vector-hybrid";
-        var (indexClient, searchClient) = await SetUpAsync(indexName);
+        var indexClient = factory.CreateSearchIndexClient();
 
-        var ex = await Assert.ThrowsAsync<RequestFailedException>(
-            () => searchClient.SearchAsync<VectorDocument>(
-                "widget",
-                VectorOptions(AlongX, k: 3),
-                TestContext.Current.CancellationToken));
+        await CreateIndexAsync(indexClient, indexName);
+        var searchClient = factory.CreateSearchClient(indexName);
+        await UploadHybridDocumentsAsync(searchClient);
 
-        Assert.Equal((int)HttpStatusCode.BadRequest, ex.Status);
-        Assert.Contains("Reciprocal Rank Fusion", ex.Message);
+        var options = VectorOptions(AlongX, k: 2);
+
+        var ids = await SearchIdsAsync(searchClient, options, search: "widget");
+
+        Assert.Equal("both", ids[0]);
 
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// The score in hybrid mode is the RRF score, which is small by construction — Azure warns
+    /// that a value near 0.03 still indicates a strong match. A document ranked first by both
+    /// arms scores exactly <c>float32(2/61)</c>, the value Azure's own documentation publishes.
+    /// </summary>
+    [Fact]
+    public async Task HybridScore_IsTheRrfScore()
+    {
+        const string indexName = "test-vector-hybrid-score";
+        var indexClient = factory.CreateSearchIndexClient();
+
+        await CreateIndexAsync(indexClient, indexName);
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        var batch = IndexDocumentsBatch.Upload(new[]
+        {
+            new VectorDocument { Id = "winner", Title = "widget", Category = "a", Embedding = [1f, 0f, 0f] },
+        });
+
+        await searchClient.IndexDocumentsAsync(batch, cancellationToken: TestContext.Current.CancellationToken);
+
+        var response = await searchClient.SearchAsync<VectorDocument>(
+            "widget", VectorOptions(AlongX, k: 1), TestContext.Current.CancellationToken);
+
+        var result = await response.Value.GetResultsAsync().FirstAsync(TestContext.Current.CancellationToken);
+
+        // float32(2/61). Asserted to 8 places rather than exactly: the SDK surfaces the score as
+        // a double, and the JSON it is read from carries the single-precision value's shortest
+        // round-trippable form, so the trailing digits of the float32 do not survive the wire.
+        Assert.Equal(0.032786883413791656, result.Score!.Value, 8);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Weighting a vector query scales every term that arm contributes, which the SDK sends as
+    /// <c>weight</c> on the query.
+    /// </summary>
+    [Fact]
+    public async Task VectorQueryWeight_ScalesThatArmsContribution()
+    {
+        const string indexName = "test-vector-hybrid-weight";
+        var indexClient = factory.CreateSearchIndexClient();
+
+        await CreateIndexAsync(indexClient, indexName);
+        var searchClient = factory.CreateSearchClient(indexName);
+        await UploadHybridDocumentsAsync(searchClient);
+
+        var weighted = VectorOptions(AlongX, k: 2);
+        weighted.VectorSearch!.Queries[0].Weight = 10f;
+
+        var response = await searchClient.SearchAsync<VectorDocument>(
+            "widget", weighted, TestContext.Current.CancellationToken);
+
+        var results = await response.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
+        var scores = results.ToDictionary(i => i.Document.Id, i => i.Score!.Value);
+
+        // Returned by the vector arm alone, so its whole score scales with the weight.
+        Assert.Equal(10.0 / 61.0, scores["vectoronly"], 5);
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>
+    /// Documents whose arms disagree, so that fusion has something to demonstrate. The text
+    /// scores tie deliberately: Lucene normalizes term frequency, so repeating a term does not
+    /// reliably outrank a single occurrence.
+    /// </summary>
+    private static async Task UploadHybridDocumentsAsync(SearchClient searchClient)
+    {
+        var batch = IndexDocumentsBatch.Upload(new[]
+        {
+            new VectorDocument { Id = "textonly", Title = "widget", Category = "a", Embedding = [0f, 0f, 1f] },
+            new VectorDocument { Id = "vectoronly", Title = "unrelated", Category = "a", Embedding = [1f, 0f, 0f] },
+            new VectorDocument { Id = "both", Title = "widget", Category = "a", Embedding = [0.9f, 0.1f, 0f] },
+            new VectorDocument { Id = "filler", Title = "widget", Category = "a", Embedding = [0f, -1f, 0f] },
+        });
+
+        await searchClient.IndexDocumentsAsync(batch, cancellationToken: TestContext.Current.CancellationToken);
     }
 
     private static SearchOptions VectorOptions(float[] vector, int k)
@@ -488,10 +576,13 @@ public class VectorSearchIntegrationTests(EmulatorFactory factory)
         await searchClient.IndexDocumentsAsync(batch, cancellationToken: TestContext.Current.CancellationToken);
     }
 
-    private static async Task<List<string>> SearchIdsAsync(SearchClient searchClient, SearchOptions options)
+    private static async Task<List<string>> SearchIdsAsync(
+        SearchClient searchClient,
+        SearchOptions options,
+        string? search = null)
     {
         var response = await searchClient.SearchAsync<VectorDocument>(
-            null, options, TestContext.Current.CancellationToken);
+            search, options, TestContext.Current.CancellationToken);
 
         var results = await response.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
 
