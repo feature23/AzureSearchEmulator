@@ -29,6 +29,13 @@ public static class SearchFieldExtensions
             return CreateComplexFields(field, value, path);
         }
 
+        if (field.IsVectorField())
+        {
+            // Checked before the general collection path: a vector is stored whole rather than
+            // as one indexed term per element (issue #46).
+            return CreateVectorFields(field, value, path);
+        }
+
         if (field.Type.StartsWith("Collection(", StringComparison.Ordinal))
         {
             return CreateCollectionFields(field, value, path);
@@ -158,6 +165,23 @@ public static class SearchFieldExtensions
                 yield return indexField;
             }
         }
+    }
+
+    /// <summary>
+    /// Creates the Lucene fields for a <c>Collection(Edm.Single)</c> vector field (issue #46).
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="CreateCollectionFields"/> because almost none of that path
+    /// applies: a vector is not searched by term, filtered, sorted or faceted, so it wants
+    /// neither the per-element indexed fields nor the facet doc values, and writing them would
+    /// put one term per dimension into the dictionary. See <see cref="VectorSearchSupport"/>
+    /// for what is written instead and why the stored copy is the authoritative one.
+    /// </remarks>
+    private static IEnumerable<IIndexableField> CreateVectorFields(SearchField field, JsonNode value, string path)
+    {
+        var vector = VectorSearchSupport.ParseVector(path, value, field.Dimensions);
+
+        return VectorSearchSupport.CreateFields(path, (JsonArray)value, vector);
     }
 
     private static IEnumerable<IIndexableField> CreateCollectionFields(SearchField field, JsonNode value, string path)

@@ -69,6 +69,9 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Suggestions and autocomplete via `docs/suggest` and `docs/autocomplete` (see Suggesters and
   autocomplete below)
+* Vector fields: `Collection(Edm.Single)` with `vectorSearch` profiles and algorithms, for
+  index definition, document upload, and retrieval. Querying by vector is not supported yet
+  (see Vector fields below)
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
 
@@ -247,6 +250,62 @@ contains rather than over its lowercased search tokens.
 
 `search.ismatch` filters without contributing to relevance, while `search.ismatchscoring`
 selects the same documents and feeds their full-text scores into the ranking.
+
+### Vector fields
+
+Fields of type `Collection(Edm.Single)` can be declared, uploaded, and retrieved. An index
+declares its vector configuration under `vectorSearch`, and a vector field names a profile
+from it, exactly as in Azure Search:
+
+```json
+{
+  "name": "embedding",
+  "type": "Collection(Edm.Single)",
+  "searchable": true,
+  "retrievable": false,
+  "dimensions": 1536,
+  "vectorSearchProfile": "vp"
+}
+```
+
+```json
+"vectorSearch": {
+  "algorithms": [
+    { "name": "hnswAlgo", "kind": "hnsw",
+      "hnswParameters": { "m": 4, "efConstruction": 400, "efSearch": 500, "metric": "cosine" } }
+  ],
+  "profiles": [ { "name": "vp", "algorithm": "hnswAlgo" } ]
+}
+```
+
+Both algorithm kinds (`hnsw` and `exhaustiveKnn`) and all three metrics (`cosine`, the
+default, plus `dotProduct` and `euclidean`) are accepted. The HNSW tuning parameters `m`,
+`efConstruction` and `efSearch` are accepted and preserved, but they do not affect results.
+
+Properties the emulator does not model — `vectorizers`, `compressions`, and anything Azure
+adds later — are preserved verbatim, so a definition read from the real service survives a
+get-modify-put unchanged. The one exception is a **profile-level `vectorizer`**, which is
+rejected outright rather than kept: it would make the emulator accept an index whose queries
+it must then refuse, and saying so at create time points at the profile responsible.
+
+`dimensions` must be between 2 and 4096, the bounds the Azure REST specification sets. The
+`hamming` metric is not supported: Azure restricts it to bit-packed binary vectors, an element
+type the emulator does not implement.
+
+A document whose vector length does not match the field's `dimensions` is rejected with a
+400, as in Azure Search, without failing the rest of the batch. `dimensions` cannot be
+changed once the index exists.
+
+A vector field may be declared inside an `Edm.ComplexType`, but not inside a
+`Collection(Edm.ComplexType)`: a document holds one vector per field, so the several vectors
+the elements of a collection would contribute have nowhere to go. That combination is
+rejected when the index is created.
+
+**Querying by vector is not supported yet.** A request carrying `vectorQueries` is rejected
+rather than silently ignored, so a search never returns ordinary text results as though the
+vector query had been honoured. `vectorizers` are also rejected, since generating an
+embedding from query text requires a hosted embedding model; supply precomputed embeddings
+instead.
 
 ### Complex type support
 

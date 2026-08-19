@@ -29,13 +29,29 @@ public class SearchIndex
     public string? DefaultScoringProfile { get; set; }
 
     /// <summary>
+    /// Vector search algorithms and profiles available to <c>Collection(Edm.Single)</c> fields
+    /// (issue #46).
+    /// </summary>
+    /// <remarks>
+    /// Null when the index defines no vector configuration, which is both the Azure default and
+    /// the state of every index the emulator wrote before this was modelled. Kept nullable
+    /// rather than defaulted to an empty instance so that an index without vector search does
+    /// not grow an empty <c>vectorSearch</c> object on round-trip.
+    ///
+    /// Omitted when null rather than written as <c>"vectorSearch": null</c>, so that an index
+    /// with no vector configuration keeps the definition it was created with.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public VectorSearch? VectorSearch { get; set; }
+
+    /// <summary>
     /// Index properties the emulator does not model, kept verbatim so they survive a
     /// get-modify-put cycle (issue #41).
     /// </summary>
     /// <remarks>
     /// A client that reads an index, changes one field and writes it back would otherwise
     /// have <c>analyzers</c>, <c>corsOptions</c>, <c>similarity</c>,
-    /// <c>semantic</c>, <c>vectorSearch</c> and <c>encryptionKey</c> silently deleted from
+    /// <c>semantic</c> and <c>encryptionKey</c> silently deleted from
     /// its own definition — the emulator would be destroying configuration rather than
     /// merely ignoring it. Capturing them here costs nothing and keeps the stored definition
     /// faithful, even though the features behind them stay unimplemented.
