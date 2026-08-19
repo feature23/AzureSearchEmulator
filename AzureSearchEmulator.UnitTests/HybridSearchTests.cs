@@ -492,4 +492,41 @@ public class HybridSearchTests : IDisposable
         public IndexReader RefreshReader(string indexName) => GetIndexReader(indexName);
         public void ClearCachedReader(string indexName) { }
     }
+
+    /// <summary>
+    /// A hybrid result is ranked by fused rank, not by the relevance score
+    /// <c>search.score()</c> names, so Azure rejects the combination outright rather than
+    /// sorting by a score that does not apply (issue #48).
+    /// </summary>
+    [Fact]
+    public async Task OrderBySearchScore_OnAHybridQuery_Throws()
+    {
+        IndexDisagreeingDocuments();
+
+        var request = HybridRequest("widget", [1f, 0f, 0f]);
+        request.Orderby = "search.score() desc";
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _searcher.Search(_index, request));
+
+        Assert.Contains("search.score()", ex.Message);
+    }
+
+    /// <summary>
+    /// The same restriction applies to a pure vector query, which is scored by similarity.
+    /// </summary>
+    [Fact]
+    public async Task OrderBySearchScore_OnAPureVectorQuery_Throws()
+    {
+        IndexDisagreeingDocuments();
+
+        var request = HybridRequest(null, [1f, 0f, 0f]);
+        request.Orderby = "search.score() desc";
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _searcher.Search(_index, request));
+
+        Assert.Contains("search.score()", ex.Message);
+    }
+
 }

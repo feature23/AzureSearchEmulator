@@ -19,7 +19,11 @@ public class ServiceStatsController(ISearchIndexRepository searchIndexRepository
         
         var stats = new Dictionary<string, object>
         {
-            ["@odata.context"] = $"{Request.Scheme}://{Request.Host}/$metadata#Microsoft.Azure.Search.V2025_05_01_Preview.ServiceStatistics",
+            // Named for a GA version whose surface the emulator actually covers. The previous
+            // V2025_05_01_Preview advertised a preview whose vector and semantic features are
+            // unimplemented here — and which the pinned Azure.Search.Documents client cannot
+            // even request.
+            ["@odata.context"] = $"{Request.Scheme}://{Request.Host}/$metadata#Microsoft.Azure.Search.V2024_07_01.ServiceStatistics",
             ["counters"] = new
             {
                 documentCount = new
