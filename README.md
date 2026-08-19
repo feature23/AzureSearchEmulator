@@ -70,8 +70,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
 * Suggestions and autocomplete via `docs/suggest` and `docs/autocomplete` (see Suggesters and
   autocomplete below)
 * Vector search: `Collection(Edm.Single)` fields with `vectorSearch` profiles and algorithms,
-  and `vectorQueries` with all three metrics and both filter modes (see Vector fields below).
-  Hybrid search is not supported yet
+  `vectorQueries` with all three metrics and both filter modes, and hybrid search fusing text
+  and vector rankings with Reciprocal Rank Fusion (see Vector fields below)
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
 
@@ -344,15 +344,47 @@ They are strictly monotonic in the similarity and land in the same `(0, 1]` rang
 Assert on which documents came back and in what order rather than on a literal score, unless
 the metric is cosine.
 
+#### Hybrid search
+
+Sending `search` and `vectorQueries` together runs both and fuses the rankings with
+Reciprocal Rank Fusion, as Azure does. Each arm contributes `1/(60 + rank)` for every
+document it returns, and a document's score is the sum across the arms it appears in — so a
+document both arms rate well outranks one that a single arm rates best, which is the reason
+to run a hybrid query at all.
+
+The arms cannot simply be unioned: a BM25 score is unbounded and a vector score sits in
+`(0, 1]`, so whichever produced larger numbers would decide the ranking regardless of how the
+other arm rated the same documents. RRF discards the scores and fuses on rank instead.
+
+**Each *field* is its own arm**, not each vector query. A text query alongside one vector
+query naming two fields fuses three rankings. Several vector queries with no `search` are
+fused the same way; a single vector query with no `search` is not a fusion and keeps its
+similarity score.
+
+`weight` on a vector query scales every term that arm contributes (default `1.0`). The text
+arm always has an implicit weight of 1.0 and cannot be given one, matching Azure.
+
+**RRF scores are small by construction.** One arm contributes at most `1/61 ≈ 0.0164`, so a
+two-arm hybrid tops out near `0.033`. Azure warns about this directly — a score of 0.03 is a
+strong match, not a weak one — and hybrid scores are not comparable with the `@search.score`
+of a pure text or pure vector query.
+
+Two details Azure does not document are reproduced here from the scores it publishes: ranks
+are **1-based**, and the arithmetic is **single precision**. A document ranked first by both
+arms scores exactly `0.032786883413791656`, which is `float32(2/61)` and the value Azure's own
+hybrid example reports.
+
+Ties have no documented rule, and Azure explicitly disclaims stable ordering for equal scores.
+The emulator breaks them by document key so that a fused ranking is reproducible.
+
 #### Not supported
 
-* **Hybrid search** — combining `search` with `vectorQueries`. Azure fuses the two rankings
-  with Reciprocal Rank Fusion; until that is implemented the request is rejected, since a
-  naive union would rank on scores from unrelated scales.
 * **`kind: "text"` queries and `vectorizers`**, which need a hosted embedding model. Supply
   precomputed embeddings instead.
 * **Compression and quantization**, which are accepted in an index definition and ignored;
   the emulator stores vectors uncompressed, which can only make its results more exact.
+* **Semantic ranking** (`@search.rerankerScore`), which in Azure layers on top of the fused
+  result rather than participating in it.
 
 ### Complex type support
 
