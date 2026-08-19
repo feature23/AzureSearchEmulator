@@ -666,12 +666,19 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         ScoringProfile? profile,
         bool hasVectorQueries = false)
     {
+        // A wildcard counts as no text query here, not as one matching everything: alongside
+        // vector queries it is a pure vector search, which is how Azure reads it and how REST
+        // samples routinely write it. A vector query supplies the whole result set on its own,
+        // so returning null rather than MatchAllDocsQuery keeps it from being intersected with
+        // every document in the index (issue #46).
+        if (hasVectorQueries && !VectorQuerySupport.HasTextQuery(request))
+        {
+            return null;
+        }
+
         if (request.Search == null)
         {
-            // A vector query supplies the whole result set on its own, so there is no text half
-            // to match against. Returning null rather than MatchAllDocsQuery keeps the vector
-            // query from being intersected with every document in the index (issue #46).
-            return hasVectorQueries ? null : new MatchAllDocsQuery();
+            return new MatchAllDocsQuery();
         }
 
         // Searchable sub-fields count too, and are addressed by their path. Vector fields are

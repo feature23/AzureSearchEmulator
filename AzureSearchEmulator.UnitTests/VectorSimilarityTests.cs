@@ -180,6 +180,34 @@ public class VectorSimilarityTests
         }
     }
 
+    /// <summary>
+    /// A similarity marginally above 1 — reachable from floating-point accumulation over
+    /// near-identical vectors — makes the cosine distance marginally negative. The score is
+    /// clamped to 1 rather than allowed to run away: one document reported at 3.4e38 among
+    /// neighbours scoring near 1 is far more confusing than one reported as the perfect match it
+    /// very nearly is.
+    /// </summary>
+    [Theory]
+    [InlineData(1.0000001f)]
+    [InlineData(1.001f)]
+    [InlineData(2f)]
+    public void Cosine_ScoreIsClamped_ForSimilarityAboveOne(float similarity)
+    {
+        var score = VectorSimilarity.GetScore(VectorSearchMetric.Cosine, similarity);
+
+        Assert.InRange(score, 0f, 1f);
+    }
+
+    /// <summary>
+    /// A negative Euclidean distance is not physically meaningful, but the transform must stay
+    /// inside its documented range if one ever arrives.
+    /// </summary>
+    [Fact]
+    public void Euclidean_ScoreIsClamped_ForNegativeDistance()
+    {
+        Assert.InRange(VectorSimilarity.GetScore(VectorSearchMetric.Euclidean, -2f), 0f, 1f);
+    }
+
     [Fact]
     public void Evaluate_ReturnsBothHalves()
     {

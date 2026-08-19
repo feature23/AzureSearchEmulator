@@ -40,6 +40,20 @@ public static class VectorQuerySupport
         => request.VectorQueries is { Count: > 0 };
 
     /// <summary>
+    /// True when the request carries a full-text query, as opposed to none or a wildcard.
+    /// </summary>
+    /// <remarks>
+    /// <c>*</c> and <c>*:*</c> are match-all rather than searches for anything, which is the
+    /// same distinction <c>LuceneNetIndexSearcher.IsScored</c> draws when deciding whether a
+    /// scoring profile has something to act on. It matters here because
+    /// <c>"search": "*"</c> alongside <c>vectorQueries</c> is a pure vector search, not a
+    /// hybrid one — Azure treats it that way, REST samples routinely send it, and refusing it
+    /// as an unsupported hybrid would reject a request with no text query in it.
+    /// </remarks>
+    public static bool HasTextQuery(SearchRequest request)
+        => request.Search is not (null or "*" or "*:*");
+
+    /// <summary>
     /// Checks the request's vector queries against the index, throwing on the first fault.
     /// </summary>
     /// <remarks>
@@ -60,7 +74,7 @@ public static class VectorQuerySupport
 
         // Checked here rather than in Combine so that it is reported before the reader is
         // opened, like the rest of these.
-        if (request.Search != null)
+        if (HasTextQuery(request))
         {
             throw new InvalidOperationException(HybridUnsupportedMessage);
         }
@@ -102,8 +116,19 @@ public static class VectorQuerySupport
     /// </para>
     /// <para>
     /// With vector queries and no text query — the pure vector search this phase implements —
-    /// the vector queries are unioned, so a document near the query vector in any of them
-    /// matches, and Lucene's own coordination takes the best score among them.
+    /// a document near the query vector in any of them matches, and its score is the best of
+    /// them rather than the sum.
+    /// </para>
+    /// <para>
+    /// That best-of is why this is a <see cref="DisjunctionMaxQuery"/> and not a
+    /// <see cref="BooleanQuery"/> of <see cref="Occur.SHOULD"/> clauses. Lucene sums the scores
+    /// of matching SHOULD clauses and, with coordination enabled, scales each document by the
+    /// fraction of clauses it matched — so a document with a perfect match on one field and no
+    /// vector for another is halved to 0.5, while a mediocre match on both sums past 1.0 and
+    /// outranks it. Both are wrong: a similarity is not additive, and a document is not a worse
+    /// match for lacking a field the query happened to name. Taking the maximum keeps the score
+    /// inside the range <see cref="VectorSimilarity"/> documents and matches the best-field rule
+    /// already applied within a single query.
     /// </para>
     /// <para>
     /// A request combining <c>search</c> with <c>vectorQueries</c> is a hybrid search, which
@@ -130,11 +155,13 @@ public static class VectorQuerySupport
             return vectorQueries[0];
         }
 
-        var combined = new BooleanQuery();
+        // tieBreakerMultiplier of 0 takes the maximum outright, with no contribution from the
+        // other matching queries — the best-field semantics described above.
+        var combined = new DisjunctionMaxQuery(0f);
 
         foreach (var query in vectorQueries)
         {
-            combined.Add(query, Occur.SHOULD);
+            combined.Add(query);
         }
 
         return combined;

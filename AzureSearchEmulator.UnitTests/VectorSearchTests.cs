@@ -433,6 +433,123 @@ public class VectorSearchTests : IDisposable
     }
 
     /// <summary>
+    /// Several vector queries take a document's best score, not the sum, and a document is not
+    /// penalized for lacking a field the query named.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A BooleanQuery of SHOULD clauses gets both of these wrong: it sums the matching clauses
+    /// and, with coordination on, scales each document by the fraction it matched. A perfect
+    /// match on one field with no vector for the other came back as 0.5, outranked by a mediocre
+    /// match on both that summed to 1.43 — outside the range a similarity is documented to
+    /// occupy, and the wrong order.
+    /// </para>
+    /// <para>
+    /// This asserts the score a similarity produces, so it belongs to the phase that produces
+    /// one. Once several arms are fused by rank the score is rank-derived and a document rated
+    /// by every arm deliberately outranks one rated by a single arm, however perfectly — that is
+    /// what fusion is for, and HybridSearchTests covers it there.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task SeveralVectorQueries_TakeTheBestScoreRatherThanTheSum()
+    {
+        var index = CreateTwoFieldIndex();
+
+        var result = _indexer.IndexDocuments(index,
+        [
+            // Exactly the query vector on A, and no vector for B at all.
+            new UploadIndexDocumentAction(TwoFieldDoc("onlyA", [1f, 0f, 0f], null)),
+            // A middling match on both fields.
+            new UploadIndexDocumentAction(TwoFieldDoc("bothMid", [0.6f, 0.8f, 0f], [0.6f, 0.8f, 0f])),
+        ]);
+        Assert.All(result.Value, r => Assert.True(r.Status, r.ErrorMessage));
+
+        var response = await _searcher.Search(index, new SearchRequest
+        {
+            VectorQueries =
+            [
+                new VectorQuery { Kind = "vector", Vector = [1f, 0f, 0f], Fields = "A", KNearestNeighborsCount = 10 },
+                new VectorQuery { Kind = "vector", Vector = [1f, 0f, 0f], Fields = "B", KNearestNeighborsCount = 10 },
+            ]
+        });
+
+        var scores = response.Results.ToDictionary(
+            i => i["Id"]!.GetValue<string>(),
+            i => i["@search.score"]!.GetValue<float>());
+
+        // The perfect match keeps its perfect score and comes first: it is not halved for
+        // lacking a field the query named, and nothing is summed past what a similarity can
+        // reach.
+        Assert.Equal(1f, scores["onlyA"], 5);
+        Assert.Equal("onlyA", Ids(response)[0]);
+        Assert.All(scores.Values, score => Assert.InRange(score, 0f, 1f));
+    }
+
+    /// <summary>
+    /// <c>search: "*"</c> is match-all rather than a text query, so alongside vector queries it
+    /// is a pure vector search — which is how Azure reads it and how REST samples routinely
+    /// write it. Refusing it as an unsupported hybrid would reject a request containing no text
+    /// query at all.
+    /// </summary>
+    [Theory]
+    [InlineData("*")]
+    [InlineData("*:*")]
+    public async Task WildcardSearch_WithVectorQueries_IsAPureVectorSearch(string search)
+    {
+        IndexAxisDocuments();
+
+        var request = VectorRequest([1f, 0f, 0f], k: 1);
+        request.Search = search;
+
+        var response = await _searcher.Search(_index, request);
+
+        Assert.Equal(["x"], Ids(response));
+        Assert.Equal(1f, response.Results[0]["@search.score"]!.GetValue<float>(), 5);
+    }
+
+    private static SearchIndex CreateTwoFieldIndex() => new()
+    {
+        Name = "vectors",
+        Fields =
+        [
+            new SearchField { Name = "Id", Type = "Edm.String", Key = true, Searchable = false, Filterable = true },
+            new SearchField
+            {
+                Name = "A", Type = "Collection(Edm.Single)", Searchable = true,
+                Filterable = false, Dimensions = 3, VectorSearchProfile = "vp"
+            },
+            new SearchField
+            {
+                Name = "B", Type = "Collection(Edm.Single)", Searchable = true,
+                Filterable = false, Dimensions = 3, VectorSearchProfile = "vp"
+            },
+        ],
+        VectorSearch = new VectorSearch
+        {
+            Algorithms = [new VectorSearchAlgorithm { Name = "algo" }],
+            Profiles = [new VectorSearchProfile { Name = "vp", Algorithm = "algo" }]
+        }
+    };
+
+    private static JsonObject TwoFieldDoc(string id, float[]? a, float[]? b)
+    {
+        var doc = new JsonObject { ["Id"] = id };
+
+        if (a != null)
+        {
+            doc["A"] = new JsonArray(a.Select(f => (JsonNode)f).ToArray());
+        }
+
+        if (b != null)
+        {
+            doc["B"] = new JsonArray(b.Select(f => (JsonNode)f).ToArray());
+        }
+
+        return doc;
+    }
+
+    /// <summary>
     /// Single-RAMDirectory backed factory pair shared between indexer and searcher so writes are
     /// visible to subsequent reads within the same test.
     /// </summary>

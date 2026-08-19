@@ -83,11 +83,18 @@ public static class VectorSearchSupport
     /// True when this field is a vector field rather than an ordinary collection.
     /// </summary>
     /// <remarks>
-    /// The type alone is the test. A <c>Collection(Edm.Single)</c> without
-    /// <see cref="SearchField.Dimensions"/> is not a usable vector field, but it is also not
-    /// something else — it is a vector field with a missing declaration, and
-    /// <see cref="Indexing.VectorSearchValidator"/> reports it as such rather than letting it
-    /// fall through to a path that would index each float as its own term.
+    /// The type alone is the test, deliberately, rather than the presence of
+    /// <see cref="SearchField.Dimensions"/>. A <c>Collection(Edm.Single)</c> without dimensions
+    /// is not a usable vector field, but it is also not something else — it is a vector field
+    /// with a missing declaration, and <see cref="Indexing.VectorSearchValidator"/> reports it
+    /// as such. Gating on dimensions instead would let exactly that mistake fall through to the
+    /// ordinary collection path, where a 1536-element embedding becomes 1536 terms in the
+    /// dictionary and no error is raised at all.
+    ///
+    /// Nothing is reclassified by this. Before vector fields existed the type reached
+    /// <c>CreateScalarField</c> and threw "Unsupported field type Edm.Single", so no index
+    /// predating the feature can hold a document with such a field for the routing change to
+    /// affect.
     /// </remarks>
     public static bool IsVectorField(this SearchField field)
         => string.Equals(field.Type, VectorFieldType, StringComparison.Ordinal);

@@ -147,10 +147,14 @@ public class VectorSearchQuery : Query
                 {
                     continue;
                 }
-                else if (acceptedBits == null && liveDocs?.Get(doc) == false)
+
+                // Checked unconditionally rather than only when there is no filter. A filter is
+                // handed liveDocs and is expected to honour them, but that is a convention
+                // rather than a guarantee — a cached or field-cache-backed filter may return
+                // bits covering all of maxDoc regardless — and a deleted document surfacing in
+                // results is a worse outcome than one redundant bit test per document.
+                if (liveDocs?.Get(doc) == false)
                 {
-                    // Without a filter, deleted documents still have to be skipped; with one,
-                    // the filter was already given liveDocs to honour.
                     continue;
                 }
 
@@ -266,6 +270,12 @@ public class VectorSearchQuery : Query
         hash.Add(_metric);
         hash.Add(_k);
         hash.Add(Boost);
+
+        // Equals distinguishes two queries by their pre-filter, so the hash has to move when the
+        // filter does or the contract is broken. A Lucene Filter has no dependable GetHashCode
+        // of its own, so this folds in only whether one is present — enough to keep equal
+        // objects hashing equally, which is the direction that matters.
+        hash.Add(_preFilter != null);
 
         return hash.ToHashCode();
     }

@@ -113,7 +113,14 @@ public class VectorScoreQuery(IReadOnlyDictionary<int, float> hits) : Query
 
         public override int Freq => 1;
 
-        public override float GetScore() => hits[_index].Score * boost;
+        /// <remarks>
+        /// Bounds-checked because <see cref="Advance"/> ends by calling
+        /// <see cref="NextDoc"/>, which can leave the scorer past the last hit — and a collector
+        /// that scores defensively after exhaustion would otherwise crash the query rather than
+        /// simply see no more documents.
+        /// </remarks>
+        public override float GetScore()
+            => _index < 0 || _index >= hits.Count ? 0f : hits[_index].Score * boost;
 
         public override int NextDoc()
         {

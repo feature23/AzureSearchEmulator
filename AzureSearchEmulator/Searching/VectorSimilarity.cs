@@ -95,9 +95,15 @@ public static class VectorSimilarity
     /// Guards the two ways the arithmetic can leave that range. A NaN input — which
     /// <see cref="TensorPrimitives"/> produces for a zero-length vector under cosine, since the
     /// magnitude it divides by is zero — would otherwise propagate into the score and make the
-    /// document unorderable against every other; it is reported as the lowest score instead. A
-    /// value below -1 (possible for an unbounded dot product) would drive the denominator
-    /// through zero and flip the sign, so the denominator is held just above zero.
+    /// document unorderable against every other; it is reported as the lowest score instead.
+    ///
+    /// A distance at or below -1 would drive the denominator through zero and flip the sign.
+    /// That is reachable in practice: floating-point accumulation in a similarity over
+    /// near-identical vectors can return marginally more than 1, making the distance marginally
+    /// negative. The result is clamped to 1 — the score an exact match earns — rather than
+    /// allowed to run away, because a single document reported at 3.4e38 among neighbours
+    /// scoring near 1 is far more confusing than one reported as the perfect match it very
+    /// nearly is.
     /// </remarks>
     private static float Squash(float distance)
     {
@@ -108,7 +114,7 @@ public static class VectorSimilarity
 
         var denominator = 1f + distance;
 
-        return denominator <= float.Epsilon ? float.MaxValue : 1f / denominator;
+        return denominator <= float.Epsilon ? 1f : Math.Min(1f / denominator, 1f);
     }
 
     /// <summary>
