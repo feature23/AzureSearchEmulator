@@ -32,7 +32,7 @@ public static class VectorSearchValidator
 
         foreach (var field in EnumerateFields(index.Fields))
         {
-            if (FindInvalidField(index, field.Field, field.Path) is { } fieldError)
+            if (FindInvalidField(index, field.Field, field.Path, field.InCollection) is { } fieldError)
             {
                 return fieldError;
             }
@@ -105,7 +105,11 @@ public static class VectorSearchValidator
         return null;
     }
 
-    private static string? FindInvalidField(SearchIndex index, SearchField field, string path)
+    private static string? FindInvalidField(
+        SearchIndex index,
+        SearchField field,
+        string path,
+        bool inComplexCollection)
     {
         var isVectorField = field.IsVectorField();
 
@@ -177,28 +181,48 @@ public static class VectorSearchValidator
             return $"Vector field '{path}' cannot be the key field.";
         }
 
+        // A document has one vector per field, and Lucene allows one doc-values entry per field
+        // per document — so the several vectors the elements of a complex collection would
+        // contribute have nowhere to go. Azure refuses the same combination. Refusing at
+        // definition time reports it once, against the field responsible; allowing it would let
+        // the index be created and then fail every upload that populated more than one element,
+        // with an error naming a Lucene sidecar rather than the schema.
+        if (inComplexCollection)
+        {
+            return $"Vector field '{path}' cannot be declared inside a " +
+                   "Collection(Edm.ComplexType); a document can hold only one vector per field.";
+        }
+
         return null;
     }
 
     /// <summary>
     /// Walks the index's fields, including the sub-fields of complex types, pairing each with
-    /// its full path.
+    /// its full path and whether it sits beneath a complex collection.
     /// </summary>
     /// <remarks>
-    /// Vector fields are legal inside a complex type, and a mistake one level down deserves the
-    /// same report as one at the top, naming the path that identifies it.
+    /// A vector field is legal inside a single complex type but not inside a collection of them
+    /// — see <see cref="FindInvalidField"/> — and a mistake one level down deserves the same
+    /// report as one at the top, naming the path that identifies it.
     /// </remarks>
-    private static IEnumerable<(SearchField Field, string Path)> EnumerateFields(
+    private static IEnumerable<(SearchField Field, string Path, bool InCollection)> EnumerateFields(
         IEnumerable<SearchField> fields,
-        string prefix = "")
+        string prefix = "",
+        bool inCollection = false)
     {
         foreach (var field in fields)
         {
             var path = prefix + field.Name;
 
-            yield return (field, path);
+            yield return (field, path, inCollection);
 
-            foreach (var subField in EnumerateFields(field.Fields, path + ComplexTypeSupport.PathSeparator))
+            // Once inside a complex collection every field below is too, however deeply nested.
+            var childrenInCollection = inCollection || field.IsComplexCollection();
+
+            foreach (var subField in EnumerateFields(
+                         field.Fields,
+                         path + ComplexTypeSupport.PathSeparator,
+                         childrenInCollection))
             {
                 yield return subField;
             }

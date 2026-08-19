@@ -1,8 +1,10 @@
 ﻿using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
+using AzureSearchEmulator.Searching;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
+using Lucene.Net.Util;
 
 namespace AzureSearchEmulator.Indexing;
 
@@ -74,7 +76,64 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
             doc.Add(docField);
         }
 
+        RestoreVectorDocValues(context.Index, doc);
+
         context.Writer.UpdateDocument(keyTerm, doc.Fields);
+    }
+
+    /// <summary>
+    /// Rebuilds the packed doc values of every vector field the merged document still holds a
+    /// stored value for (issue #46).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="IndexSearcher.Doc(int)"/> returns stored fields and nothing else, so the
+    /// document reconstructed above has lost every doc-values field it had. For a vector that
+    /// matters more than it looks: the stored JSON sidecar is what retrieval reads, so a merged
+    /// document keeps coming back correctly, while the packed copy a query scans is gone — the
+    /// document silently stops being findable by vector search while still looking intact.
+    /// </para>
+    /// <para>
+    /// Rebuilding from the sidecar is possible precisely because the sidecar survives, which is
+    /// why it is the authoritative copy. A vector whose sidecar is absent is skipped rather than
+    /// zero-filled: the field simply has no value for this document, and inventing one would put
+    /// it in results it does not belong in.
+    /// </para>
+    /// <para>
+    /// Deliberately scoped to vector fields. The same reconstruction drops facet, geo and
+    /// complex-element doc values too, which is a pre-existing fault worth fixing on its own
+    /// terms rather than quietly here, where it would be neither tested nor reviewed as such.
+    /// </para>
+    /// </remarks>
+    private static void RestoreVectorDocValues(SearchIndex index, Document doc)
+    {
+        foreach (var (path, field) in ComplexTypeSupport.EnumerateLeafFields(index))
+        {
+            if (!field.IsVectorField())
+            {
+                continue;
+            }
+
+            var docValuesName = VectorSearchSupport.GetVectorDocValuesFieldName(path);
+
+            // Present already when this merge supplied the vector itself, in which case the
+            // fields built for it are the ones to keep.
+            if (doc.GetField(docValuesName) != null)
+            {
+                continue;
+            }
+
+            var storedJson = doc.Get(SearchFieldExtensions.GetCollectionStorageFieldName(path));
+
+            if (storedJson == null || JsonNode.Parse(storedJson) is not JsonArray array)
+            {
+                continue;
+            }
+
+            var vector = VectorSearchSupport.ParseVector(path, array, field.Dimensions);
+
+            doc.Add(new BinaryDocValuesField(docValuesName, new BytesRef(VectorSearchSupport.PackVector(vector))));
+        }
     }
 
     protected abstract void IndexDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields);

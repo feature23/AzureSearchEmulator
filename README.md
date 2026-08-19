@@ -280,12 +280,22 @@ from it, exactly as in Azure Search:
 
 Both algorithm kinds (`hnsw` and `exhaustiveKnn`) and all three metrics (`cosine`, the
 default, plus `dotProduct` and `euclidean`) are accepted. The HNSW tuning parameters `m`,
-`efConstruction` and `efSearch` are accepted and preserved so that an index definition
-written for the real service is usable unchanged, but they do not affect results.
+`efConstruction` and `efSearch` are accepted and preserved, but they do not affect results.
+
+Properties the emulator does not model — `vectorizers`, `compressions`, and anything Azure
+adds later — are preserved verbatim, so a definition read from the real service survives a
+get-modify-put unchanged. The one exception is a **profile-level `vectorizer`**, which is
+rejected outright rather than kept: it would make the emulator accept an index whose queries
+it must then refuse, and saying so at create time points at the profile responsible.
 
 A document whose vector length does not match the field's `dimensions` is rejected with a
 400, as in Azure Search, without failing the rest of the batch. `dimensions` cannot be
 changed once the index exists.
+
+A vector field may be declared inside an `Edm.ComplexType`, but not inside a
+`Collection(Edm.ComplexType)`: a document holds one vector per field, so the several vectors
+the elements of a collection would contribute have nowhere to go. That combination is
+rejected when the index is created.
 
 **Querying by vector is not supported yet.** A request carrying `vectorQueries` is rejected
 rather than silently ignored, so a search never returns ordinary text results as though the

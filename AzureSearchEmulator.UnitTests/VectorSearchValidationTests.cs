@@ -287,6 +287,101 @@ public class VectorSearchValidationTests
     }
 
     /// <summary>
+    /// A vector field inside a <c>Collection(Edm.ComplexType)</c> cannot be indexed: every
+    /// element would write its own doc-values entry under one field name, and Lucene allows one
+    /// per document. Refusing the definition reports it once against the field responsible,
+    /// rather than letting the index be created and then failing every upload that populated
+    /// more than one element with an error naming an internal sidecar.
+    /// </summary>
+    [Fact]
+    public void VectorField_InsideAComplexCollection_IsRejected()
+    {
+        var index = CreateIndex(i => i.Fields.Add(new SearchField
+        {
+            Name = "Chunks",
+            Type = "Collection(Edm.ComplexType)",
+            Fields =
+            [
+                new SearchField
+                {
+                    Name = "Vec",
+                    Type = "Collection(Edm.Single)",
+                    Filterable = false,
+                    Dimensions = 3,
+                    VectorSearchProfile = "vp"
+                }
+            ]
+        }));
+
+        var error = VectorSearchValidator.FindInvalidVectorSearch(index);
+
+        Assert.Contains("Chunks/Vec", error);
+        Assert.Contains("Collection(Edm.ComplexType)", error);
+    }
+
+    /// <summary>
+    /// Nesting deeper does not make it workable, so the check has to follow the whole path down
+    /// rather than looking only at the immediate parent.
+    /// </summary>
+    [Fact]
+    public void VectorField_NestedDeeperInsideAComplexCollection_IsRejected()
+    {
+        var index = CreateIndex(i => i.Fields.Add(new SearchField
+        {
+            Name = "Chunks",
+            Type = "Collection(Edm.ComplexType)",
+            Fields =
+            [
+                new SearchField
+                {
+                    Name = "Inner",
+                    Type = "Edm.ComplexType",
+                    Fields =
+                    [
+                        new SearchField
+                        {
+                            Name = "Vec",
+                            Type = "Collection(Edm.Single)",
+                            Filterable = false,
+                            Dimensions = 3,
+                            VectorSearchProfile = "vp"
+                        }
+                    ]
+                }
+            ]
+        }));
+
+        Assert.Contains("Chunks/Inner/Vec", VectorSearchValidator.FindInvalidVectorSearch(index));
+    }
+
+    /// <summary>
+    /// A single complex type holds one value per sub-field, so a vector inside one is fine — the
+    /// collection is what breaks it.
+    /// </summary>
+    [Fact]
+    public void VectorField_InsideASingleComplexType_IsAccepted()
+    {
+        var index = CreateIndex(i => i.Fields.Add(new SearchField
+        {
+            Name = "Profile",
+            Type = "Edm.ComplexType",
+            Fields =
+            [
+                new SearchField
+                {
+                    Name = "Vec",
+                    Type = "Collection(Edm.Single)",
+                    Filterable = false,
+                    Dimensions = 3,
+                    VectorSearchProfile = "vp"
+                }
+            ]
+        }));
+
+        Assert.Null(VectorSearchValidator.FindInvalidVectorSearch(index));
+    }
+
+    /// <summary>
     /// A vector's length is fixed once documents exist, so changing it has to be refused the way
     /// the other immutable field properties are.
     /// </summary>

@@ -184,5 +184,13 @@ static IEdmModel GetEdmModel()
     index.Ignore(i => i.AdditionalProperties);
     builder.ComplexType<SearchField>().Ignore(i => i.AdditionalProperties);
 
+    // The vector search types carry bags of their own (issue #46), for the same reason and with
+    // the same consequence if they reach the EDM model.
+    builder.ComplexType<VectorSearch>().Ignore(i => i.AdditionalProperties);
+    builder.ComplexType<VectorSearchAlgorithm>().Ignore(i => i.AdditionalProperties);
+    builder.ComplexType<VectorSearchProfile>().Ignore(i => i.AdditionalProperties);
+    builder.ComplexType<HnswParameters>().Ignore(i => i.AdditionalProperties);
+    builder.ComplexType<ExhaustiveKnnParameters>().Ignore(i => i.AdditionalProperties);
+
     return builder.GetEdmModel();
 }

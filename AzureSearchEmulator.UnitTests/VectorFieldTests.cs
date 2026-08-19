@@ -278,6 +278,71 @@ public class VectorFieldTests : IDisposable
         Assert.Equal([1f, 2f, 3f], embedding!.Select(n => n!.GetValue<float>()).ToArray());
     }
 
+    /// <summary>
+    /// The half of the merge behaviour that retrieval cannot show. The stored sidecar survives a
+    /// merge on its own, but the packed doc-values copy — the one a vector query scans — does
+    /// not, so a merged document would keep coming back correctly from <c>GetDoc</c> while
+    /// silently disappearing from vector search.
+    /// </summary>
+    /// <remarks>
+    /// Asserted against the doc values directly rather than through retrieval, because that is
+    /// exactly the gap the original test left: it checked the sidecar, which was never the copy
+    /// at risk.
+    /// </remarks>
+    [Fact]
+    public void Merge_OfAnotherField_KeepsTheSearchableVectorCopy()
+    {
+        _indexer.IndexDocuments(_index, [new UploadIndexDocumentAction(Doc("1", "First", [1f, 2f, 3f]))]);
+
+        _indexer.IndexDocuments(_index, [new MergeIndexDocumentAction(new JsonObject
+        {
+            ["Id"] = "1",
+            ["Name"] = "Renamed"
+        })]);
+
+        using var reader = DirectoryReader.Open(_directory);
+        var atomic = reader.Leaves[0].AtomicReader;
+        var docValues = atomic.GetBinaryDocValues(VectorSearchSupport.GetVectorDocValuesFieldName("Embedding"));
+
+        Assert.NotNull(docValues);
+
+        var bytes = new BytesRef();
+        docValues.Get(0, bytes);
+
+        var vector = new float[3];
+        VectorSearchSupport.UnpackVector(bytes.Bytes.AsSpan(bytes.Offset, bytes.Length), vector);
+
+        Assert.Equal([1f, 2f, 3f], vector);
+    }
+
+    /// <summary>
+    /// A merge that supplies a new vector keeps the new one, rather than the rebuild restoring
+    /// the old value over it.
+    /// </summary>
+    [Fact]
+    public void Merge_ThatReplacesTheVector_KeepsTheNewDocValues()
+    {
+        _indexer.IndexDocuments(_index, [new UploadIndexDocumentAction(Doc("1", "First", [1f, 2f, 3f]))]);
+
+        _indexer.IndexDocuments(_index, [new MergeIndexDocumentAction(new JsonObject
+        {
+            ["Id"] = "1",
+            ["Embedding"] = new JsonArray(7f, 8f, 9f)
+        })]);
+
+        using var reader = DirectoryReader.Open(_directory);
+        var atomic = reader.Leaves[0].AtomicReader;
+        var docValues = atomic.GetBinaryDocValues(VectorSearchSupport.GetVectorDocValuesFieldName("Embedding"));
+
+        var bytes = new BytesRef();
+        docValues.Get(0, bytes);
+
+        var vector = new float[3];
+        VectorSearchSupport.UnpackVector(bytes.Bytes.AsSpan(bytes.Offset, bytes.Length), vector);
+
+        Assert.Equal([7f, 8f, 9f], vector);
+    }
+
     [Fact]
     public async Task Merge_CanReplaceTheVector()
     {

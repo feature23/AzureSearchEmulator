@@ -241,6 +241,77 @@ public class VectorSearchJsonTests
     }
 
     /// <summary>
+    /// Modelling <c>vectorSearch</c> means anything nested inside it that is not declared would
+    /// be dropped, where before it rode through the index-level extension bag and survived by
+    /// default. <c>vectorizers</c> and <c>compressions</c> are the two that matter: a client
+    /// that read a real-service definition, changed one field and wrote it back would otherwise
+    /// find them deleted — the loss issue #41 set out to stop.
+    /// </summary>
+    [Fact]
+    public void UnmodelledVectorSearchProperties_SurviveRoundTrip()
+    {
+        const string json =
+            """
+            {
+              "name": "vectors",
+              "fields": [{ "name": "id", "type": "Edm.String", "key": true }],
+              "vectorSearch": {
+                "algorithms": [{ "name": "a", "kind": "hnsw" }],
+                "profiles": [{ "name": "p", "algorithm": "a" }],
+                "vectorizers": [
+                  { "name": "vz", "kind": "azureOpenAI",
+                    "azureOpenAIParameters": { "resourceUri": "https://example.openai.azure.com" } }
+                ],
+                "compressions": [{ "name": "cz", "kind": "scalarQuantization" }]
+              }
+            }
+            """;
+
+        var vectorSearch = RoundTrip(json)["vectorSearch"];
+
+        Assert.NotNull(vectorSearch?["vectorizers"]);
+        Assert.NotNull(vectorSearch?["compressions"]);
+
+        // Structure intact, not merely present: a client has to be able to use what comes back.
+        Assert.Equal("azureOpenAI", vectorSearch?["vectorizers"]?[0]?["kind"]?.GetValue<string>());
+        Assert.Equal(
+            "https://example.openai.azure.com",
+            vectorSearch?["vectorizers"]?[0]?["azureOpenAIParameters"]?["resourceUri"]?.GetValue<string>());
+    }
+
+    /// <summary>
+    /// The bag applies per type rather than recursively, so each level of the vector
+    /// configuration needs its own.
+    /// </summary>
+    [Fact]
+    public void UnmodelledPropertiesNestedDeeper_SurviveRoundTrip()
+    {
+        const string json =
+            """
+            {
+              "name": "vectors",
+              "fields": [{ "name": "id", "type": "Edm.String", "key": true }],
+              "vectorSearch": {
+                "algorithms": [
+                  { "name": "a", "kind": "hnsw",
+                    "hnswParameters": { "metric": "cosine", "somethingNew": 7 },
+                    "unknownOnAlgorithm": true }
+                ],
+                "profiles": [
+                  { "name": "p", "algorithm": "a", "unknownOnProfile": "kept" }
+                ]
+              }
+            }
+            """;
+
+        var vectorSearch = RoundTrip(json)["vectorSearch"];
+
+        Assert.Equal(7, vectorSearch?["algorithms"]?[0]?["hnswParameters"]?["somethingNew"]?.GetValue<int>());
+        Assert.True(vectorSearch?["algorithms"]?[0]?["unknownOnAlgorithm"]?.GetValue<bool>());
+        Assert.Equal("kept", vectorSearch?["profiles"]?[0]?["unknownOnProfile"]?.GetValue<string>());
+    }
+
+    /// <summary>
     /// Azure spells these camelCase, and a metric written any other way would not be understood
     /// by the SDK reading the definition back.
     /// </summary>

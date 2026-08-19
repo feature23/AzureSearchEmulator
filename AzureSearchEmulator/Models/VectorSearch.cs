@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace AzureSearchEmulator.Models;
@@ -14,8 +15,15 @@ namespace AzureSearchEmulator.Models;
 ///
 /// <c>vectorizers</c> and <c>compressions</c> are deliberately not modelled. Both describe
 /// work the emulator cannot do — a vectorizer calls a hosted embedding model, and a
-/// compression changes the stored representation to trade recall for size — so they stay in
-/// <see cref="SearchIndex.AdditionalProperties"/>, preserved verbatim but inert.
+/// compression changes the stored representation to trade recall for size — so they are
+/// captured in <see cref="AdditionalProperties"/> and preserved verbatim but inert.
+///
+/// That bag is not optional. Before <c>vectorSearch</c> was modelled the whole object rode
+/// through <see cref="SearchIndex.AdditionalProperties"/> and everything inside it survived by
+/// default; modelling it means anything not declared here is dropped instead, so a client that
+/// read a real-service definition, changed one field and wrote it back would find its
+/// vectorizers deleted. Every type in this file carries a bag for the same reason —
+/// <see cref="JsonExtensionDataAttribute"/> applies per type rather than recursively.
 /// </remarks>
 public class VectorSearch
 {
@@ -66,6 +74,13 @@ public class VectorSearch
 
         return algorithm.GetMetric();
     }
+
+    /// <summary>
+    /// Properties the emulator does not model, kept verbatim so they survive a get-modify-put
+    /// cycle (issues #41 and #46).
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -117,6 +132,13 @@ public class VectorSearchAlgorithm
             VectorSearchAlgorithmKind.ExhaustiveKnn => ExhaustiveKnnParameters?.Metric,
             _ => HnswParameters?.Metric
         } ?? VectorSearchMetric.Cosine;
+
+    /// <summary>
+    /// Properties the emulator does not model, kept verbatim so they survive a get-modify-put
+    /// cycle (issues #41 and #46).
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -154,6 +176,13 @@ public class HnswParameters
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public VectorSearchMetric? Metric { get; set; }
+
+    /// <summary>
+    /// Properties the emulator does not model, kept verbatim so they survive a get-modify-put
+    /// cycle (issues #41 and #46).
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -166,6 +195,13 @@ public class ExhaustiveKnnParameters
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public VectorSearchMetric? Metric { get; set; }
+
+    /// <summary>
+    /// Properties the emulator does not model, kept verbatim so they survive a get-modify-put
+    /// cycle (issues #41 and #46).
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
@@ -202,6 +238,13 @@ public class VectorSearchProfile
     /// </remarks>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Compression { get; set; }
+
+    /// <summary>
+    /// Properties the emulator does not model, kept verbatim so they survive a get-modify-put
+    /// cycle (issues #41 and #46).
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }
 }
 
 /// <summary>
