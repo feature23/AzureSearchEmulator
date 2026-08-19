@@ -34,24 +34,26 @@ public class HybridSearchQuery : Query
 {
     private readonly Query? _textQuery;
     private readonly IReadOnlyList<VectorSearchQuery> _vectorQueries;
+    private readonly Filter? _preFilter;
     private readonly int _textRecallSize;
 
     /// <param name="textQuery">
     /// The full-text arm, or null for a vector-only fusion of several vector queries.
     /// </param>
-    /// <param name="textRecallSize">
-    /// How many documents the text arm contributes to the fusion. Azure calls this
-    /// <c>maxTextRecallSize</c> and defaults it to 1000 — far above the page size, because the
-    /// fusion needs enough of each arm's ranking to find the documents both arms agree on.
+    /// <param name="preFilter">
+    /// Restricts the text arm to documents passing the request's <c>$filter</c>, matching what
+    /// the vector arms already do under <c>preFilter</c> mode. Null leaves the filter to the
+    /// surrounding search, which is <c>postFilter</c>.
     /// </param>
     public HybridSearchQuery(
         Query? textQuery,
         IReadOnlyList<VectorSearchQuery> vectorQueries,
-        int textRecallSize = VectorQuerySupport.DefaultTextRecallSize)
+        Filter? preFilter = null)
     {
         _textQuery = textQuery;
         _vectorQueries = vectorQueries;
-        _textRecallSize = textRecallSize;
+        _preFilter = preFilter;
+        _textRecallSize = VectorQuerySupport.DefaultTextRecallSize;
     }
 
     public override Query Rewrite(IndexReader reader)
@@ -65,9 +67,13 @@ public class HybridSearchQuery : Query
 
         foreach (var vectorQuery in _vectorQueries)
         {
+            // Boost multiplies the weight rather than being dropped. A boost and a weight are
+            // the same lever from two directions — one set on the Lucene query, one on the
+            // request — and the single-arm path already applies boost, so ignoring it here would
+            // make a query score differently depending on how many arms it was fused with.
             arms.Add(new ReciprocalRankFusion.Arm(
                 vectorQuery.GetRankedDocIds(reader),
-                vectorQuery.Weight));
+                vectorQuery.Weight * vectorQuery.Boost));
         }
 
         var fused = ReciprocalRankFusion.Fuse(arms);
@@ -84,18 +90,40 @@ public class HybridSearchQuery : Query
     }
 
     /// <summary>
+    /// The full-text arm, or null when the fusion is over vector queries alone.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for hit highlighting, which has to be built from the text query rather than the
+    /// fused one. Overriding <see cref="Query.ExtractTerms"/> here does not work: Lucene's
+    /// <c>QueryScorer</c> rewrites before extracting, and this query rewrites into a set of
+    /// document ids that has no terms at all — so the highlighter saw none, scored every fragment
+    /// zero, and returned an empty <c>@search.highlights</c> with no error to say why.
+    /// </remarks>
+    public Query? TextQuery => _textQuery;
+
+    /// <summary>
     /// Runs the text arm and returns its documents in relevance order.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Bounded by <see cref="_textRecallSize"/> rather than by the page size, because a document
     /// the text arm ranks 200th may still finish near the top of the fused ranking if a vector
     /// arm rates it highly — which is the case hybrid search exists to serve.
+    /// </para>
+    /// <para>
+    /// The filter is applied here rather than only around the fused result, for the same reason
+    /// it is applied to the vector arms: a bounded window over an unfiltered ranking can be
+    /// filled entirely by documents the filter excludes, leaving the ones that pass it with no
+    /// text contribution to the fusion at all. Ranking within the filtered set is what
+    /// <c>preFilter</c> means, and applying it to one arm but not the other would make a
+    /// document's fused score depend on which arm happened to see the filter.
+    /// </para>
     /// </remarks>
     private IReadOnlyList<int> GetTextRanking(Query textQuery, IndexReader reader)
     {
         var searcher = new IndexSearcher(reader);
 
-        var docs = searcher.Search(textQuery, _textRecallSize);
+        var docs = searcher.Search(textQuery, _preFilter, _textRecallSize);
 
         return docs.ScoreDocs.Select(i => i.Doc).ToList();
     }
@@ -107,6 +135,7 @@ public class HybridSearchQuery : Query
         => obj is HybridSearchQuery other
            && Equals(_textQuery, other._textQuery)
            && _vectorQueries.SequenceEqual(other._vectorQueries)
+           && Equals(_preFilter, other._preFilter)
            && _textRecallSize == other._textRecallSize
            && Boost.Equals(other.Boost);
 
@@ -123,6 +152,10 @@ public class HybridSearchQuery : Query
 
         hash.Add(_textRecallSize);
         hash.Add(Boost);
+
+        // A Filter has no dependable GetHashCode, so only its presence is folded in — enough to
+        // keep equal objects hashing equally, which is the direction that matters.
+        hash.Add(_preFilter != null);
 
         return hash.ToHashCode();
     }

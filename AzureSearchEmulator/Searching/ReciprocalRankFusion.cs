@@ -84,9 +84,11 @@ public static class ReciprocalRankFusion
         return scores
             .OrderByDescending(i => i.Value)
             // Azure documents no tie-break and explicitly disclaims stable ordering for equal
-            // scores, so any rule is as faithful as any other. Ordering by document id makes the
-            // emulator's answer reproducible, which is the property a test needs and the one
-            // thing the service cannot offer.
+            // scores, so any rule is as faithful as any other. Ordering by Lucene's internal
+            // document id makes the emulator's answer reproducible for a given index, which is
+            // the property a test needs and the one thing the service cannot offer. Note it is
+            // reproducible rather than stable: the id is an index position, not the document
+            // key, so it can change when segments merge.
             .ThenBy(i => i.Key)
             .Select(i => (i.Key, i.Value))
             .ToList();

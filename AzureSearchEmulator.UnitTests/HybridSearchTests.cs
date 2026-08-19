@@ -418,6 +418,68 @@ public class HybridSearchTests : IDisposable
     }
 
     /// <summary>
+    /// Hit highlighting still works on a hybrid query.
+    /// </summary>
+    /// <remarks>
+    /// The highlighter scores fragments by the terms the query it was built from reports, and a
+    /// fused query rewrites into a set of document ids, which has no terms at all. Left to the
+    /// default that produced an empty <c>@search.highlights</c> on every hybrid result, with no
+    /// error to say why — the text arm's terms have to be reported explicitly.
+    /// </remarks>
+    [Fact]
+    public async Task Highlighting_WorksUnderHybrid()
+    {
+        IndexDisagreeingDocuments();
+
+        var request = HybridRequest("widget", [1f, 0f, 0f]);
+        request.Highlight = "Title";
+
+        var response = await _searcher.Search(_index, request);
+
+        var highlighted = response.Results
+            .Select(i => i["@search.highlights"]?["Title"]?[0]?.GetValue<string>())
+            .FirstOrDefault(i => i != null);
+
+        Assert.NotNull(highlighted);
+        Assert.Contains("<em>widget</em>", highlighted);
+    }
+
+    /// <summary>
+    /// The text arm ranks within the filter, not around it.
+    /// </summary>
+    /// <remarks>
+    /// The arm takes a bounded window of its ranking — 1000 documents by default — and an
+    /// unfiltered window can be filled entirely by documents the filter excludes, leaving the
+    /// ones that pass with no text contribution to the fusion. Ranking inside the filtered set is
+    /// what <c>preFilter</c> means, and the vector arms already did it; applying it to one arm
+    /// and not the other would make a fused score depend on which arm saw the filter.
+    /// </remarks>
+    [Fact]
+    public async Task PreFilter_AppliesToTheTextArmToo()
+    {
+        IndexDisagreeingDocuments();
+
+        var request = HybridRequest("widget", [1f, 0f, 0f]);
+        request.Filter = "Id eq 'both' or Id eq 'filler'";
+
+        var response = await _searcher.Search(_index, request);
+
+        // Only the two documents the filter admits, and each carries a first-or-second text term
+        // rather than whatever rank it held in the unfiltered ranking.
+        Assert.Equal(2, response.Results.Count);
+        Assert.All(Ids(response), id => Assert.Contains(id, new[] { "both", "filler" }));
+
+        var top = response.Results[0]["@search.score"]!.GetValue<float>();
+
+        // Once the filter narrows both arms to these two documents, "both" leads each of them —
+        // the text arm on the tie-break and the vector arm on proximity — so it carries two
+        // first-place terms. Without the filter reaching the text arm it would have ranked
+        // behind the documents the filter excludes.
+        Assert.Equal("both", Ids(response)[0]);
+        Assert.Equal(2f / 61f, top, 6);
+    }
+
+    /// <summary>
     /// Single-RAMDirectory backed factory pair shared between indexer and searcher so writes are
     /// visible to subsequent reads within the same test.
     /// </summary>

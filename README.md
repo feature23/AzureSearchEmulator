@@ -375,7 +375,9 @@ arms scores exactly `0.032786883413791656`, which is `float32(2/61)` and the val
 hybrid example reports.
 
 Ties have no documented rule, and Azure explicitly disclaims stable ordering for equal scores.
-The emulator breaks them by document key so that a fused ranking is reproducible.
+The emulator breaks them by internal document order, which makes a fused ranking reproducible
+for a given index — though not necessarily stable across a reindex, since that order can change
+when segments merge.
 
 #### Not supported
 

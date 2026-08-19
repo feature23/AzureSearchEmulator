@@ -129,10 +129,14 @@ public static class VectorQuerySupport
     /// rank sidesteps the arithmetic entirely.
     /// </para>
     /// </remarks>
+    /// <param name="preFilter">
+    /// The filter the arms rank within, or null under <c>postFilter</c>. Passed to the fusion so
+    /// the text arm narrows its window the same way the vector arms narrow their scan.
+    /// </param>
     public static Query? Combine(
         Query? textQuery,
         IReadOnlyList<VectorSearchQuery> vectorQueries,
-        SearchRequest request)
+        Filter? preFilter)
     {
         if (vectorQueries.Count == 0)
         {
@@ -147,7 +151,7 @@ public static class VectorQuerySupport
             return vectorQueries[0];
         }
 
-        return new HybridSearchQuery(textQuery, vectorQueries);
+        return new HybridSearchQuery(textQuery, vectorQueries, preFilter);
     }
 
     private static IReadOnlyList<VectorSearchQuery> BuildQuery(
@@ -298,7 +302,11 @@ public static class VectorQuerySupport
             }
 
             resolved = metric;
-            resolvedPath = path;
+
+            // Only the first field is remembered: it is the one that established the metric, and
+            // reassigning each time would make the message name the previous field rather than
+            // the one the mismatch is measured against.
+            resolvedPath ??= path;
         }
 
         return resolved ?? VectorSearchMetric.Cosine;
