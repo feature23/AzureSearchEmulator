@@ -16,6 +16,8 @@ namespace AzureSearchEmulator.Searching;
 
 public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory) : IIndexSearcher
 {
+    private const string SearchScoreFunction = "search.score(";
+
     public Task<JsonObject?> GetDoc(SearchIndex index, string key, string? select = null)
     {
         var searcher = GetSearcher(index);
@@ -99,7 +101,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             });
         }
 
-        var sort = GetSortFromRequest(index, request);
+        var sort = GetSortFromRequest(index, request, query);
 
         // Built from the text arm rather than the fused query: a hybrid query rewrites into a
         // set of document ids, which carries no terms for the highlighter to score against
@@ -376,7 +378,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         return new HitHighlighter(query, request.HighlightPreTag ?? "<em>", request.HighlightPostTag ?? "</em>", highlightFields);
     }
 
-    private static Sort GetSortFromRequest(SearchIndex index, SearchRequest request)
+    private static Sort GetSortFromRequest(SearchIndex index, SearchRequest request, Query? query = null)
     {
         if (string.IsNullOrEmpty(request.Orderby))
         {
@@ -402,6 +404,15 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         for (int i = 0; i < parts.Length; i++)
         {
             fields[i] = GetSortField(index, parts[i]);
+
+            // A vector arm scores by similarity and a hybrid one by fused rank, neither of
+            // which is the relevance score search.score() names, so Azure rejects the
+            // combination outright rather than sorting by a score that does not apply.
+            if (fields[i].Type == SortFieldType.SCORE && query is VectorSearchQuery or HybridSearchQuery)
+            {
+                throw new InvalidOperationException(
+                    "search.score() cannot be used in $orderby for a vector or hybrid query.");
+            }
         }
 
         return new Sort(fields);
@@ -453,6 +464,11 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             return GetGeoDistanceSortField(index, sort);
         }
 
+        if (sort.StartsWith(SearchScoreFunction, StringComparison.OrdinalIgnoreCase))
+        {
+            return GetSearchScoreSortField(sort);
+        }
+
         var sortParts = sort.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         if (sortParts.Length is 0 or > 2)
@@ -479,6 +495,13 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 $"Field '{fieldName}' is of type {field.Type} and cannot be sorted on; sort by one of its sub-fields instead.");
         }
 
+        // Azure restricts $orderby to sortable fields; accepting one that is not would let a
+        // sort succeed locally and then fail against the real service.
+        if (!field.IsSortable())
+        {
+            throw new InvalidOperationException($"Field '{fieldName}' is not sortable.");
+        }
+
         // A sub-field beneath a Collection(Edm.ComplexType) has one value per element, so
         // there is no single value to order by. Azure Search rejects this rather than
         // picking an arbitrary element.
@@ -489,6 +512,44 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         }
 
         return new SortField(fieldPath, GetSortFieldType(field), descending);
+    }
+
+    /// <summary>
+    /// Builds the sort for a <c>search.score() asc|desc</c> order-by clause, which orders by
+    /// relevance rather than by any field.
+    /// </summary>
+    /// <remarks>
+    /// This is the documented way to combine relevance with a secondary sort, as in
+    /// <c>search.score() desc, Rating desc</c>. The function takes no arguments and may appear
+    /// at any position in the clause list.
+    /// </remarks>
+    private static SortField GetSearchScoreSortField(string sort)
+    {
+        var remainder = sort[SearchScoreFunction.Length..].TrimStart();
+
+        if (!remainder.StartsWith(')'))
+        {
+            throw new InvalidOperationException(
+                $"Unable to parse $orderby expression '{sort}'; search.score does not take any arguments.");
+        }
+
+        var direction = remainder[1..].Trim();
+
+        // Lucene's SortField.FIELD_SCORE already sorts by descending score, so its "reverse"
+        // flag runs backwards relative to the asc/desc spelled in the clause: reversing it
+        // yields ascending. An omitted direction means ascending in OData, but Azure's default
+        // ordering is by descending relevance, so a bare search.score() is treated as desc —
+        // the same result a caller gets by omitting $orderby altogether.
+        var ascending = direction.Equals("asc", StringComparison.OrdinalIgnoreCase);
+
+        if (!ascending
+            && direction.Length > 0
+            && !direction.Equals("desc", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Unable to parse $orderby expression '{sort}'.");
+        }
+
+        return new SortField(null, SortFieldType.SCORE, ascending);
     }
 
     /// <summary>

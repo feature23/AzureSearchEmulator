@@ -273,6 +273,44 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
+    /// <summary>
+    /// search.score() is the documented way to combine relevance with a secondary sort, and
+    /// the SDK passes it through $orderby untouched (issue #48).
+    /// </summary>
+    [Fact]
+    public async Task SearchDocuments_OrderBySearchScore_ShouldReturnResultsRankedByRelevance()
+    {
+        const string indexName = "test-search-score-sort";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        await CreateIndexAsync(indexClient, indexName);
+        await UploadDocumentsAsync(searchClient);
+
+        var options = new SearchOptions
+        {
+            OrderBy = { "search.score() desc", "Price desc" },
+            Size = 50
+        };
+
+        var results = await searchClient.SearchAsync<Product>("laptop", options, TestContext.Current.CancellationToken);
+        var items = await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(items);
+
+        double? previousScore = null;
+        foreach (var item in items)
+        {
+            if (previousScore.HasValue)
+            {
+                Assert.True(item.Score <= previousScore, "Results should be sorted by relevance descending");
+            }
+            previousScore = item.Score;
+        }
+
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task SearchDocuments_WithPaging_ShouldReturnPagedResults()
     {

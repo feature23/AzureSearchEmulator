@@ -663,6 +663,148 @@ public class LuceneNetIndexSearcherTests : IDisposable
         Assert.Equal(5, response.Results.Count);
     }
 
+    // ===== $orderby sortable enforcement and search.score() (issue #48) =====
+
+    /// <summary>
+    /// A field explicitly marked <c>sortable: false</c> is rejected in $orderby. Accepting it
+    /// would let a sort succeed locally that fails against the real service.
+    /// </summary>
+    [Fact]
+    public async Task OrderBy_NonSortableField_Throws()
+    {
+        var index = LuceneTestHelper.CreateProductIndex();
+        index.Fields.Single(i => i.Name == "Category").Sortable = false;
+
+        using var helper = new LuceneTestHelper(index, LuceneTestHelper.CreateProductDocuments());
+        var searcher = new LuceneNetIndexSearcher(new StubIndexReaderFactory(helper.Directory));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => searcher.Search(helper.Index, new SearchRequest
+            {
+                Search = "*",
+                Orderby = "Category asc",
+                Top = 50
+            }));
+
+        Assert.Contains("not sortable", ex.Message);
+    }
+
+    /// <summary>
+    /// An omitted <c>sortable</c> defaults to true for a single-valued simple field, so a
+    /// field that never states the flag is still orderable.
+    /// </summary>
+    [Fact]
+    public async Task OrderBy_FieldWithSortableUnset_IsAllowed()
+    {
+        var index = LuceneTestHelper.CreateProductIndex();
+        index.Fields.Single(i => i.Name == "Price").Sortable = null;
+
+        using var helper = new LuceneTestHelper(index, LuceneTestHelper.CreateProductDocuments());
+        var searcher = new LuceneNetIndexSearcher(new StubIndexReaderFactory(helper.Directory));
+
+        var response = await searcher.Search(helper.Index, new SearchRequest
+        {
+            Search = "*",
+            Orderby = "Price asc",
+            Top = 50
+        });
+
+        var prices = response.Results.Select(r => r["Price"]!.GetValue<double>()).ToList();
+
+        Assert.Equal(prices.OrderBy(p => p), prices);
+    }
+
+    /// <summary>
+    /// A collection is multi-valued, so it has no single value to order by and defaults to
+    /// not sortable even though the flag is absent.
+    /// </summary>
+    [Fact]
+    public async Task OrderBy_CollectionFieldWithSortableUnset_Throws()
+    {
+        var index = LuceneTestHelper.CreateProductIndex();
+        index.Fields.Add(new SearchField { Name = "Tags", Type = "Collection(Edm.String)", Filterable = true });
+
+        using var helper = new LuceneTestHelper(index, LuceneTestHelper.CreateProductDocuments());
+        var searcher = new LuceneNetIndexSearcher(new StubIndexReaderFactory(helper.Directory));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => searcher.Search(helper.Index, new SearchRequest
+            {
+                Search = "*",
+                Orderby = "Tags asc",
+                Top = 50
+            }));
+
+        Assert.Contains("not sortable", ex.Message);
+    }
+
+    [Fact]
+    public async Task OrderBy_SearchScoreDescending_RanksByRelevance()
+    {
+        var response = await _searcherService.Search(_helper.Index, new SearchRequest
+        {
+            Search = "laptop",
+            Orderby = "search.score() desc",
+            Top = 50
+        });
+
+        var scores = response.Results.Select(r => r["@search.score"]!.GetValue<float>()).ToList();
+
+        Assert.NotEmpty(scores);
+        Assert.Equal(scores.OrderByDescending(s => s), scores);
+    }
+
+    /// <summary>
+    /// search.score() may appear anywhere in the clause list, and is the documented way to
+    /// combine relevance with a secondary sort.
+    /// </summary>
+    [Fact]
+    public async Task OrderBy_SearchScoreWithSecondarySort_IsAccepted()
+    {
+        var response = await _searcherService.Search(_helper.Index, new SearchRequest
+        {
+            Search = "laptop",
+            Orderby = "search.score() desc, Rating desc",
+            Top = 50
+        });
+
+        Assert.NotEmpty(response.Results);
+    }
+
+    /// <summary>
+    /// Ascending is the inverse ordering, not the same one: relevance sorts high-to-low by
+    /// default, so asc has to actually reverse it.
+    /// </summary>
+    [Fact]
+    public async Task OrderBy_SearchScoreAscending_ReversesRelevance()
+    {
+        var response = await _searcherService.Search(_helper.Index, new SearchRequest
+        {
+            Search = "laptop",
+            Orderby = "search.score() asc",
+            Top = 50
+        });
+
+        var scores = response.Results.Select(r => r["@search.score"]!.GetValue<float>()).ToList();
+
+        Assert.NotEmpty(scores);
+        Assert.Equal(scores.OrderBy(s => s), scores);
+    }
+
+    [Fact]
+    public async Task OrderBy_SearchScoreWithArguments_Throws()
+    {
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => _searcherService.Search(_helper.Index, new SearchRequest
+            {
+                Search = "laptop",
+                Orderby = "search.score(Rating) desc",
+                Top = 50
+            }));
+
+        Assert.Contains("search.score", ex.Message);
+    }
+
     /// <summary>
     /// Stub implementation of ILuceneIndexReaderFactory backed by a RAMDirectory.
     /// </summary>

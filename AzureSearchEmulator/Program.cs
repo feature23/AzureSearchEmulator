@@ -95,10 +95,12 @@ var app = builder.Build();
 if (builder.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
+    // Route debug lists every registered endpoint at /$odata, which is a development aid and
+    // not something a deployed emulator should expose.
+    app.UseODataRouteDebug();
 }
 
 app.UseCors(CorsDefaultPolicyName);
-app.UseODataRouteDebug();
 app.UseODataQueryRequest();
 
 var requestLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("AzureSearchEmulator.Requests");

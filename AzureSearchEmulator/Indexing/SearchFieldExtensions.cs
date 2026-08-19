@@ -345,5 +345,17 @@ public static class SearchFieldExtensions
     public static bool IsCollection(this SearchField field)
         => field.Type.StartsWith("Collection(", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Whether the field may be named in an <c>$orderby</c> expression.
+    /// </summary>
+    /// <remarks>
+    /// An omitted <c>sortable</c> does not simply mean false. Azure documents the default as
+    /// "true for single-valued simple fields, false for multi-valued simple fields, and null
+    /// for complex fields", so a collection — whose several values give nothing to order by —
+    /// is the only simple case that defaults off.
+    /// </remarks>
+    public static bool IsSortable(this SearchField field)
+        => field.Sortable ?? (!field.IsCollection() && !field.IsComplex());
+
     public static string GetCollectionStorageFieldName(string fieldName) => "__azs_collection__" + fieldName;
 }
