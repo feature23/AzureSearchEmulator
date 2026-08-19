@@ -40,8 +40,31 @@ public class VectorQuery
     /// <remarks>
     /// Distinct from <c>$top</c>: this is how many candidates the vector query contributes,
     /// while <c>$top</c> is the size of the page returned.
+    ///
+    /// This is the name the Azure SDK puts on the wire. See <see cref="K"/> for the shorter
+    /// spelling the REST documentation uses.
     /// </remarks>
     public int? KNearestNeighborsCount { get; set; }
+
+    /// <summary>
+    /// The <c>k</c> alias for <see cref="KNearestNeighborsCount"/>.
+    /// </summary>
+    /// <remarks>
+    /// The Azure SDK serializes <c>kNearestNeighborsCount</c>, but the REST reference and much
+    /// of the documentation write <c>k</c>, so hand-written requests and non-SDK clients use it.
+    /// Binding only the long name would leave a request written from the documentation silently
+    /// returning the default number of neighbours instead of the requested one — an answer that
+    /// looks correct and is not, which is the divergence issue #39 set out to eliminate.
+    ///
+    /// Assigning either property sets the same underlying value, so a request carrying both is
+    /// resolved by whichever the deserializer reads last rather than being rejected; they are
+    /// two spellings of one parameter, not two parameters.
+    /// </remarks>
+    public int? K
+    {
+        get => KNearestNeighborsCount;
+        set => KNearestNeighborsCount = value;
+    }
 
     /// <summary>
     /// Comma-delimited vector fields to search.

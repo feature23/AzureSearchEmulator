@@ -19,6 +19,7 @@
 		<PackageReference Include="Lucene.Net.QueryParser" Version="4.8.0-beta00017" />
 		<PackageReference Include="Lucene.Net.Spatial" Version="4.8.0-beta00017" />
 		<PackageReference Include="Microsoft.AspNetCore.OData" Version="9.5.0" />
+		<PackageReference Include="System.Numerics.Tensors" Version="10.0.11" />
 	</ItemGroup>
 
 	<ItemGroup>

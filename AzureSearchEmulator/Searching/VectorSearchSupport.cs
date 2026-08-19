@@ -83,11 +83,18 @@ public static class VectorSearchSupport
     /// True when this field is a vector field rather than an ordinary collection.
     /// </summary>
     /// <remarks>
-    /// The type alone is the test. A <c>Collection(Edm.Single)</c> without
-    /// <see cref="SearchField.Dimensions"/> is not a usable vector field, but it is also not
-    /// something else — it is a vector field with a missing declaration, and
-    /// <see cref="Indexing.VectorSearchValidator"/> reports it as such rather than letting it
-    /// fall through to a path that would index each float as its own term.
+    /// The type alone is the test, deliberately, rather than the presence of
+    /// <see cref="SearchField.Dimensions"/>. A <c>Collection(Edm.Single)</c> without dimensions
+    /// is not a usable vector field, but it is also not something else — it is a vector field
+    /// with a missing declaration, and <see cref="Indexing.VectorSearchValidator"/> reports it
+    /// as such. Gating on dimensions instead would let exactly that mistake fall through to the
+    /// ordinary collection path, where a 1536-element embedding becomes 1536 terms in the
+    /// dictionary and no error is raised at all.
+    ///
+    /// Nothing is reclassified by this. Before vector fields existed the type reached
+    /// <c>CreateScalarField</c> and threw "Unsupported field type Edm.Single", so no index
+    /// predating the feature can hold a document with such a field for the routing change to
+    /// affect.
     /// </remarks>
     public static bool IsVectorField(this SearchField field)
         => string.Equals(field.Type, VectorFieldType, StringComparison.Ordinal);
@@ -225,44 +232,6 @@ public static class VectorSearchSupport
         {
             destination[i] = BinaryPrimitives.ReadSingleLittleEndian(packed[(i * sizeof(float))..]);
         }
-    }
-
-    /// <summary>
-    /// Returns a message refusing a request the emulator cannot answer, or null when the
-    /// request asks for no vector search at all.
-    /// </summary>
-    /// <remarks>
-    /// This phase implements the index-definition and storage half of vector search; the query
-    /// half follows. Until then a request carrying a vector query is refused, because the
-    /// alternative — binding the parameter and ignoring it — returns ordinary text results that
-    /// look like an answer to a question that was never asked.
-    ///
-    /// The two refusals are not the same. A <c>text</c> query needs a hosted embedding model
-    /// and will stay unsupported after vector search works, so it is worth naming that reason
-    /// separately from "not built yet".
-    /// </remarks>
-    public static string? GetUnsupportedQueryMessage(SearchRequest request)
-    {
-        if (request.VectorQueries is not { Count: > 0 } queries)
-        {
-            // vectorFilterMode only qualifies a vector query, so on its own it changes nothing
-            // and is not worth refusing a request over.
-            return null;
-        }
-
-        foreach (var query in queries)
-        {
-            if (string.Equals(query.Kind, "text", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Vector queries of kind 'text' are not supported: generating an " +
-                       "embedding from query text requires a hosted embedding model. Supply a " +
-                       "precomputed embedding with kind 'vector' instead.";
-            }
-        }
-
-        return "Vector queries are not supported yet. This build supports vector fields in an " +
-               "index definition and stores their values, but cannot yet answer a query " +
-               "against them.";
     }
 
     /// <summary>

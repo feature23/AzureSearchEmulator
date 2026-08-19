@@ -417,32 +417,11 @@ public class VectorFieldTests : IDisposable
     }
 
     /// <summary>
-    /// Until the query half is built, a vector query must be refused rather than ignored:
-    /// binding the parameter and dropping it would return ordinary text results that look like
-    /// an answer to a question that was never asked (the divergence issue #39 set out to end).
+    /// A text vector query needs a hosted embedding model, so it stays unsupported even now
+    /// that vector queries are answered.
     /// </summary>
     [Fact]
-    public async Task VectorQuery_IsRefusedRatherThanIgnored()
-    {
-        _indexer.IndexDocuments(_index, [new UploadIndexDocumentAction(Doc("1", "First", [1f, 2f, 3f]))]);
-
-        var request = new SearchRequest
-        {
-            VectorQueries = [new VectorQuery { Kind = "vector", Vector = [1f, 2f, 3f], Fields = "Embedding" }]
-        };
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _searcher.Search(_index, request));
-
-        Assert.Contains("not supported", ex.Message);
-    }
-
-    /// <summary>
-    /// A text vector query needs a hosted embedding model, so it stays unsupported after the
-    /// query half is built and deserves its own message.
-    /// </summary>
-    [Fact]
-    public async Task VectorQuery_OfKindText_IsRefusedForItsOwnReason()
+    public async Task VectorQuery_OfKindText_IsRefused()
     {
         var request = new SearchRequest
         {

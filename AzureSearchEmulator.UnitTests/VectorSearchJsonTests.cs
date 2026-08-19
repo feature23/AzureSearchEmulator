@@ -340,6 +340,62 @@ public class VectorSearchJsonTests
     }
 
     /// <summary>
+    /// A non-string metric has to fail as a bad request rather than an unhandled error. Anything
+    /// other than a <see cref="JsonException"/> escapes deserialization and 500s the create-index
+    /// call instead of returning the 400 it is.
+    /// </summary>
+    [Theory]
+    [InlineData("3")]
+    [InlineData("true")]
+    [InlineData("[\"cosine\"]")]
+    public void NonStringMetric_IsReportedAsABadRequest(string literal)
+    {
+        var json =
+            $$"""
+            {
+              "name": "vectors",
+              "fields": [{ "name": "id", "type": "Edm.String", "key": true }],
+              "vectorSearch": { "algorithms": [
+                { "name": "a", "kind": "hnsw", "hnswParameters": { "metric": {{literal}} } }] }
+            }
+            """;
+
+        Assert.Throws<JsonException>(() => Deserialize(json));
+    }
+
+    /// <summary>
+    /// An explicit <c>null</c> metric means unspecified, not invalid, and resolves to the
+    /// default — which is what an absent metric does and what the property being nullable says.
+    /// </summary>
+    /// <remarks>
+    /// The converter never sees it: System.Text.Json maps a JSON null straight onto a nullable
+    /// property without consulting one. Worth pinning so the distinction between "no metric" and
+    /// "a metric that is not a string" is a decision rather than an accident.
+    /// </remarks>
+    [Fact]
+    public void NullMetric_MeansUnspecifiedAndResolvesToTheDefault()
+    {
+        const string json =
+            """
+            {
+              "name": "vectors",
+              "fields": [{ "name": "id", "type": "Edm.String", "key": true }],
+              "vectorSearch": {
+                "algorithms": [
+                  { "name": "a", "kind": "hnsw", "hnswParameters": { "metric": null } }
+                ],
+                "profiles": [{ "name": "p", "algorithm": "a" }]
+              }
+            }
+            """;
+
+        var index = Deserialize(json);
+
+        Assert.Null(index.VectorSearch!.FindAlgorithm("a")!.HnswParameters!.Metric);
+        Assert.Equal(VectorSearchMetric.Cosine, index.VectorSearch.ResolveMetric("p"));
+    }
+
+    /// <summary>
     /// Azure spells these camelCase, and a metric written any other way would not be understood
     /// by the SDK reading the definition back.
     /// </summary>

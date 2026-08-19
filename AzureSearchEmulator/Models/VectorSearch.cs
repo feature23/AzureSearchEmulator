@@ -318,6 +318,19 @@ public class VectorSearchMetricConverter : JsonConverter<VectorSearchMetric>
         Type typeToConvert,
         JsonSerializerOptions options)
     {
+        // A non-string token would make GetString throw InvalidOperationException, which the
+        // model-binding layer does not recognize as a bad request and turns into a 500. Only a
+        // JsonException reaches the caller as the 400 it is.
+        //
+        // An explicit null never arrives here: the property is nullable, so System.Text.Json
+        // maps a JSON null straight onto it without consulting a converter. That is the right
+        // reading — a null metric is unspecified, not invalid, and resolves to the default.
+        if (reader.TokenType != JsonTokenType.String)
+        {
+            throw new JsonException(
+                $"A vector search metric must be a string, but was {reader.TokenType}.");
+        }
+
         var value = reader.GetString();
 
         if (string.Equals(value, HammingMetric, StringComparison.OrdinalIgnoreCase))
