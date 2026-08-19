@@ -406,6 +406,33 @@ public class VectorSearchTests : IDisposable
     }
 
     /// <summary>
+    /// A document merged on an unrelated field stays findable by vector search.
+    /// </summary>
+    /// <remarks>
+    /// The end-to-end half of the bug that <c>MergeDocument</c>'s doc-values rebuild fixes. The
+    /// storage test in phase 1 asserts the packed copy survives; this asserts what that survival
+    /// is <em>for</em>. Without it the document would keep retrieving correctly while silently
+    /// dropping out of every vector query — the failure is invisible from the retrieval side,
+    /// which is precisely why it went unnoticed.
+    /// </remarks>
+    [Fact]
+    public async Task MergedDocument_IsStillFoundByVectorSearch()
+    {
+        IndexAxisDocuments();
+
+        _indexer.IndexDocuments(_index, [new MergeIndexDocumentAction(new JsonObject
+        {
+            ["Id"] = "x",
+            ["Category"] = "renamed"
+        })]);
+
+        var response = await _searcher.Search(_index, VectorRequest([1f, 0f, 0f], k: 1));
+
+        Assert.Equal(["x"], Ids(response));
+        Assert.Equal(1f, response.Results[0]["@search.score"]!.GetValue<float>(), 5);
+    }
+
+    /// <summary>
     /// Single-RAMDirectory backed factory pair shared between indexer and searcher so writes are
     /// visible to subsequent reads within the same test.
     /// </summary>
