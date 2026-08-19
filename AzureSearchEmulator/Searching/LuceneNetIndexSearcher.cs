@@ -375,7 +375,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             highlightFields.Add(new HighlightField(indexField, maxHighlights, highlightPath));
         }
 
-        return new HitHighlighter(query, request.HighlightPreTag ?? "<em>", request.HighlightPostTag ?? "</em>", highlightFields);
+        return new HitHighlighter(index, query, request.HighlightPreTag ?? "<em>", request.HighlightPostTag ?? "</em>", highlightFields);
     }
 
     private static Sort GetSortFromRequest(SearchIndex index, SearchRequest request, Query? query = null)
@@ -775,7 +775,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             throw new InvalidOperationException("Unable to search with no searchable fields");
         }
 
-        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(index.Fields);
+        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(index);
 
         return request.QueryType switch
         {

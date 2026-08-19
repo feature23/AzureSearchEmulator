@@ -26,7 +26,7 @@ public sealed class LuceneTestHelper : IDisposable
         Index = index;
         Directory = new RAMDirectory();
 
-        var analyzer = AnalyzerHelper.GetPerFieldIndexAnalyzer(index.Fields);
+        var analyzer = AnalyzerHelper.GetPerFieldIndexAnalyzer(index);
         var config = new IndexWriterConfig(Version, analyzer);
 
         using var writer = new IndexWriter(Directory, config);

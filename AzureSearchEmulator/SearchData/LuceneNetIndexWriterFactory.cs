@@ -37,7 +37,7 @@ public class LuceneNetIndexWriterFactory(ILuceneDirectoryFactory luceneDirectory
 
     private IndexWriter CreateWriter(SearchIndex index, string indexName)
     {
-        var analyzer = AnalyzerHelper.GetPerFieldIndexAnalyzer(index.Fields);
+        var analyzer = AnalyzerHelper.GetPerFieldIndexAnalyzer(index);
         var config = new IndexWriterConfig(LuceneVersion.LUCENE_48, analyzer);
         var directory = luceneDirectoryFactory.GetDirectory(indexName);
 
