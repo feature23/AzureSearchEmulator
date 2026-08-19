@@ -73,6 +73,11 @@ public class IndexesController(
             return BadRequest(vectorError);
         }
 
+        if (AnalyzerValidator.FindInvalidAnalyzer(index) is { } analyzerError)
+        {
+            return BadRequest(analyzerError);
+        }
+
         try
         {
             await searchIndexRepository.Create(index);
@@ -119,6 +124,11 @@ public class IndexesController(
         if (VectorSearchValidator.FindInvalidVectorSearch(index) is { } vectorError)
         {
             return BadRequest(vectorError);
+        }
+
+        if (AnalyzerValidator.FindInvalidAnalyzer(index) is { } analyzerError)
+        {
+            return BadRequest(analyzerError);
         }
 
         var existing = await searchIndexRepository.Get(key);

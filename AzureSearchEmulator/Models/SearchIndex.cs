@@ -45,6 +45,42 @@ public class SearchIndex
     public VectorSearch? VectorSearch { get; set; }
 
     /// <summary>
+    /// Analyzers the index defines for its fields to name, beyond the predefined ones
+    /// (issue #34).
+    /// </summary>
+    /// <remarks>
+    /// Empty on an index that uses only predefined analyzer names, which is the common case.
+    /// A field's analyzer resolves against this list first. Nothing is shadowed by that: Azure
+    /// refuses a custom analyzer whose name collides with a predefined one, and
+    /// <see cref="Indexing.AnalyzerValidator"/> refuses it here for the same reason.
+    /// </remarks>
+    public IList<LexicalAnalyzerDefinition> Analyzers { get; init; } = new List<LexicalAnalyzerDefinition>();
+
+    /// <summary>
+    /// Tokenizers a <see cref="CustomAnalyzer"/> can build on (issue #34).
+    /// </summary>
+    public IList<AnalysisComponentDefinition> Tokenizers { get; init; } = new List<AnalysisComponentDefinition>();
+
+    /// <summary>
+    /// Token filters a <see cref="CustomAnalyzer"/> can apply (issue #34).
+    /// </summary>
+    public IList<AnalysisComponentDefinition> TokenFilters { get; init; } = new List<AnalysisComponentDefinition>();
+
+    /// <summary>
+    /// Char filters a <see cref="CustomAnalyzer"/> can apply before tokenization (issue #34).
+    /// </summary>
+    public IList<AnalysisComponentDefinition> CharFilters { get; init; } = new List<AnalysisComponentDefinition>();
+
+    /// <summary>
+    /// Finds an analyzer the index defines, or null when it defines none by that name.
+    /// </summary>
+    /// <remarks>
+    /// Matched case-insensitively, as the other named parts of an index definition are.
+    /// </remarks>
+    public LexicalAnalyzerDefinition? FindAnalyzer(string name)
+        => Analyzers.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Index properties the emulator does not model, kept verbatim so they survive a
     /// get-modify-put cycle (issue #41).
     /// </summary>

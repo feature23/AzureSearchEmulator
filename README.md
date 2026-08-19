@@ -69,6 +69,9 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   * `searchMode` - The default boolean operator, either `any` (default) or `all`
 * Suggestions and autocomplete via `docs/suggest` and `docs/autocomplete` (see Suggesters and
   autocomplete below)
+* Language and custom analyzers: every predefined `LexicalAnalyzerName`, plus custom
+  `analyzers`, `tokenizers`, `tokenFilters` and `charFilters` defined on the index
+  (see Analyzers below)
 * Vector search: `Collection(Edm.Single)` fields with `vectorSearch` profiles and algorithms,
   `vectorQueries` with all three metrics and both filter modes, and hybrid search fusing text
   and vector rankings with Reciprocal Rank Fusion (see Vector fields below)
@@ -226,6 +229,57 @@ normally written with a lambda, i.e.
 `Locations/any(loc: geo.distance(loc, geography'POINT(-122.131577 47.678581)') le 10)`.
 Collections cannot be sorted, so `$orderby` still requires a single `Edm.GeographyPoint`
 field.
+
+### Analyzers
+
+Every analyzer name in Azure's `LexicalAnalyzerName` list is accepted, along with custom
+analyzers the index defines itself.
+
+The `.lucene` language analyzers are backed by the same Apache Lucene analyzers Azure uses, so
+those behave as they do in the service. The `.microsoft` names are accepted and mapped to the
+closest Lucene analyzer for that language, but Azure implements them with a proprietary
+natural-language stack that lemmatizes rather than stems, so the *tokens* will not always match
+the service exactly. Chinese, Japanese and Korean are segmented into bigrams; Polish, Thai and
+the other languages Lucene has no analyzer for fall back to the standard analyzer, which
+segments correctly but does not stem.
+
+Custom analyzers are defined as they are in Azure, with `analyzers`, `tokenizers`,
+`tokenFilters` and `charFilters`:
+
+```jsonc
+{
+  "fields": [
+    { "name": "title", "type": "Edm.String", "searchable": true, "analyzer": "my_analyzer" }
+  ],
+  "analyzers": [
+    {
+      "name": "my_analyzer",
+      "@odata.type": "#Microsoft.Azure.Search.CustomAnalyzer",
+      "tokenizer": "standard_v2",
+      "tokenFilters": ["lowercase", "asciifolding"],
+      "charFilters": ["html_strip"]
+    }
+  ]
+}
+```
+
+`#Microsoft.Azure.Search.PatternAnalyzer`, `StandardAnalyzer` and `StopAnalyzer` are supported
+alongside `CustomAnalyzer`, and the built-in tokenizers, token filters and char filters can be
+given options by defining them under `tokenizers`, `tokenFilters` or `charFilters` and naming
+the definition from the chain.
+
+An analyzer name that is neither predefined nor defined on the index is rejected when the index
+is created, naming the field and the analyzer, rather than failing later when a document is
+indexed.
+
+#### Not supported
+
+* **`microsoft_language_tokenizer` and `microsoft_language_stemming_tokenizer`**, which are the
+  proprietary stack and have no Lucene equivalent.
+* **The `phonetic` token filter**, which lives in a Lucene package this project does not
+  reference.
+* **Options that name a file**, such as a synonym map on disk. Word lists and mappings given
+  inline in the index definition work normally.
 
 ### Filter semantics
 

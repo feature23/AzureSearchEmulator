@@ -1105,7 +1105,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         }
 
         // Get the analyzer for this index
-        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(_index.Fields);
+        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(_index);
 
         // Parse the search text
         var query = queryType switch

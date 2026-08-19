@@ -1,4 +1,5 @@
-﻿using AzureSearchEmulator.SearchData;
+﻿using AzureSearchEmulator.Models;
+using AzureSearchEmulator.SearchData;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Search;
@@ -9,9 +10,18 @@ namespace AzureSearchEmulator.Searching;
 public class HitHighlighter
 {
     private readonly Highlighter _highlighter;
+    private readonly SearchIndex _index;
 
-    public HitHighlighter(Query query, string preTag, string postTag, IList<HighlightField> fields)
+    /// <param name="index">
+    /// The index the highlighted fields belong to, needed so that a field analyzed by one of
+    /// the index's own custom analyzers is re-tokenized with that analyzer rather than the
+    /// default (issue #34). Highlighting compares the query's terms against the tokens of the
+    /// stored text, so using a different analyzer here than the field was indexed with would
+    /// mark the wrong spans, or none.
+    /// </param>
+    public HitHighlighter(SearchIndex index, Query query, string preTag, string postTag, IList<HighlightField> fields)
     {
+        _index = index;
         Fields = fields;
         var formatter = new SimpleHTMLFormatter(preTag, postTag);
         _highlighter = new Highlighter(formatter, new QueryScorer(query));
@@ -30,7 +40,7 @@ public class HitHighlighter
             if (string.IsNullOrEmpty(text))
                 continue;
 
-            var tokenStream = TokenSources.GetAnyTokenStream(reader, docId, path, doc, AnalyzerHelper.GetAnalyzer(field.SearchAnalyzer ?? field.Analyzer));
+            var tokenStream = TokenSources.GetAnyTokenStream(reader, docId, path, doc, AnalyzerHelper.GetAnalyzer(_index, field.SearchAnalyzer ?? field.Analyzer));
             var textFragments = _highlighter.GetBestTextFragments(tokenStream, text, false, maxHighlights);
 
             var fieldHighlights = (from textFragment in textFragments
