@@ -2,6 +2,7 @@
 using System.Text.Json.Nodes;
 using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
+using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.SearchData;
 using Lucene.Net.Analysis;
 using Lucene.Net.Index;
@@ -14,7 +15,14 @@ using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryC
 
 namespace AzureSearchEmulator.Searching;
 
-public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory) : IIndexSearcher
+/// <param name="synonymMapRepository">
+/// The service's synonym maps, or null where there are none to apply (issue #69). Optional so
+/// that a caller with no interest in the feature — the unit tests build a searcher over a
+/// bare Lucene directory — need not supply a store for it.
+/// </param>
+public class LuceneNetIndexSearcher(
+    ILuceneIndexReaderFactory indexReaderFactory,
+    ISynonymMapRepository? synonymMapRepository = null) : IIndexSearcher
 {
     private const string SearchScoreFunction = "search.score(";
 
@@ -53,7 +61,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         }
     }
 
-    public Task<SearchResponse> Search(SearchIndex index, SearchRequest request)
+    public async Task<SearchResponse> Search(SearchIndex index, SearchRequest request)
     {
         // Validated against the index definition before the reader is opened, so a malformed
         // request is reported as the fault it is rather than as whatever the storage layer
@@ -73,15 +81,20 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             throw new InvalidOperationException(missing);
         }
 
+        // Resolved before the filter, because a search.ismatch inside one is a full-text query
+        // and expands its terms the same way the main query does (issue #69).
+        var synonymMaps = await GetSynonymMaps(index);
+
         // Built before the query because a vector query needs it: under preFilter — the default
         // and the only mode Azure applies to the scan itself — the filter decides which
         // documents the nearest-neighbour search considers at all (issue #46).
-        var filter = GetFilterFromRequest(request, index);
+        var filter = GetFilterFromRequest(request, index, synonymMaps);
 
         // Captured once so every document in the response is scored against the same instant;
         // a freshness function reading the clock per document would rank inconsistently within
         // a single query.
-        var query = GetQueryFromRequest(index, request, profile, scoringParameters, DateTimeOffset.UtcNow, filter);
+        var query = GetQueryFromRequest(
+            index, request, profile, scoringParameters, DateTimeOffset.UtcNow, filter, synonymMaps);
 
         // Facet expressions are parsed even when nothing can match, so that an invalid one is
         // still reported as the error it is rather than silently returning no facets.
@@ -89,7 +102,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
 
         if (query == null)
         {
-            return Task.FromResult(new SearchResponse
+            return new SearchResponse
             {
                 Count = 0,
                 // An empty match set still produces the requested facets, with every bucket
@@ -98,7 +111,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 // Coverage describes how much of the index was searched, not how much of it
                 // matched, so a query that cannot match anything still reports it in full.
                 Coverage = SearchCoverage.GetCoverage(request),
-            });
+            };
         }
 
         var sort = GetSortFromRequest(index, request, query);
@@ -135,7 +148,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 response.Facets = FacetCounter.Count(searcher, facets, query, filter);
             }
 
-            return Task.FromResult(response);
+            return response;
         }
 
         var docs = searcher.Search(query, filter, hitsWanted, sort, true, true);
@@ -171,7 +184,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             response.Facets = FacetCounter.Count(searcher, facets, query, filter);
         }
 
-        return Task.FromResult(response);
+        return response;
     }
 
     public Task<SuggestResponse> Suggest(SearchIndex index, SuggestRequest request)
@@ -669,7 +682,43 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         };
     }
 
-    private static Filter? GetFilterFromRequest(SearchRequest request, SearchIndex? index = null)
+    /// <summary>
+    /// The service's synonym maps, keyed by name, or an empty set when no field names one
+    /// (issue #69).
+    /// </summary>
+    /// <remarks>
+    /// Short-circuited on the index definition so an index that uses no synonym maps — which is
+    /// most of them — never reads the synonym map directory at all, and the feature costs a
+    /// search that does not use it nothing.
+    /// </remarks>
+    private async Task<IReadOnlyDictionary<string, Models.SynonymMap>> GetSynonymMaps(SearchIndex index)
+    {
+        var referenced = ComplexTypeSupport.EnumerateLeafFields(index)
+            .SelectMany(i => i.Field.SynonymMaps)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (referenced.Count == 0 || synonymMapRepository == null)
+        {
+            return new Dictionary<string, Models.SynonymMap>();
+        }
+
+        var maps = new Dictionary<string, Models.SynonymMap>(StringComparer.OrdinalIgnoreCase);
+
+        await foreach (var synonymMap in synonymMapRepository.GetAll())
+        {
+            if (referenced.Contains(synonymMap.Name))
+            {
+                maps[synonymMap.Name] = synonymMap;
+            }
+        }
+
+        return maps;
+    }
+
+    private static Filter? GetFilterFromRequest(
+        SearchRequest request,
+        SearchIndex? index = null,
+        IReadOnlyDictionary<string, Models.SynonymMap>? synonymMaps = null)
     {
         if (string.IsNullOrEmpty(request.Filter))
         {
@@ -684,7 +733,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             return null;
         }
 
-        var query = filterQuery.Accept(new ODataQueryVisitor(index));
+        var query = filterQuery.Accept(new ODataQueryVisitor(index, synonymMaps));
 
         return new QueryWrapperFilter(query);
     }
@@ -707,7 +756,8 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         ScoringProfile? profile,
         ScoringParameterCollection parameters,
         DateTimeOffset now,
-        Filter? filter)
+        Filter? filter,
+        IReadOnlyDictionary<string, Models.SynonymMap> synonymMaps)
     {
         var preFilter = GetVectorPreFilter(request, filter);
 
@@ -715,7 +765,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             ? VectorQuerySupport.BuildQueries(index, request, preFilter)
             : [];
 
-        var query = GetBaseQueryFromRequest(index, request, profile, vectorQueries.Count > 0);
+        var query = GetBaseQueryFromRequest(index, request, profile, vectorQueries.Count > 0, synonymMaps);
 
         if (query != null && profile != null && IsScored(request))
         {
@@ -756,7 +806,8 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
         SearchIndex index,
         SearchRequest request,
         ScoringProfile? profile,
-        bool hasVectorQueries = false)
+        bool hasVectorQueries,
+        IReadOnlyDictionary<string, Models.SynonymMap> synonymMaps)
     {
         // A wildcard counts as no text query here, not as one matching everything: alongside
         // vector queries it is a pure vector search, which is how Azure reads it and how REST
@@ -794,7 +845,7 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
             throw new InvalidOperationException("Unable to search with no searchable fields");
         }
 
-        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(index);
+        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(index, synonymMaps);
 
         return request.QueryType switch
         {

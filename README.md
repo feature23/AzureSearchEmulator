@@ -74,6 +74,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   (see Analyzers below)
 * Normalizers for filter, facet and sort values: every predefined `LexicalNormalizerName`, plus
   custom `normalizers` defined on the index (see Normalizers below)
+* Synonym maps: service-level `synonymmaps` in Solr format, named by a field's `synonymMaps`
+  to widen queries at search time (see Synonym maps below)
 * Vector search: `Collection(Edm.Single)` fields with `vectorSearch` profiles and algorithms,
   `vectorQueries` with all three metrics and both filter modes, and hybrid search fusing text
   and vector rankings with Reciprocal Rank Fusion (see Vector fields below)
@@ -349,6 +351,54 @@ creation, naming the field and the normalizer. As with an analyzer, a field's no
 fixed once the index exists; changing it requires rebuilding the index.
 * **Options that name a file**, such as a synonym map on disk. Word lists and mappings given
   inline in the index definition work normally.
+
+### Synonym maps
+
+A synonym map widens a full-text query so that a search for one term also matches documents
+holding an equivalent one, without either the query or the documents being rewritten. Maps are
+service-level resources with their own routes, and a field opts in by naming one:
+
+```http
+POST /synonymmaps?api-version=2024-07-01
+Content-Type: application/json
+
+{
+  "name": "products",
+  "format": "solr",
+  "synonyms": "usa, united states, united states of america\ndog => canine, hound"
+}
+```
+
+```json
+{
+  "name": "name", "type": "Edm.String", "searchable": true,
+  "synonymMaps": ["products"]
+}
+```
+
+`GET`, `PUT` and `DELETE` on `/synonymmaps('products')` behave as the service's do, and the map
+appears in the `synonymMaps` counter of `/servicestats`.
+
+The Solr format has two rule forms, and they do different things:
+
+* **Equivalency** — `usa, united states` — makes every term match every other, keeping the term
+  that was typed. A search for either matches documents holding either.
+* **Explicit mapping** — `dog => canine, hound` — replaces the left side with the right, so a
+  search for `dog` matches documents holding `canine` or `hound`, but no longer matches
+  documents holding only `dog`.
+
+Rules are separated by newlines, matched case-insensitively, and may span several words
+(`united states of america`), which match as a phrase.
+
+Expansion happens at query time only, never while indexing — the same as the service. That is
+what makes a map safe to edit: the rules a search uses are the ones the map holds now, so
+changing them takes effect immediately and never requires reindexing. A field may name several
+maps, and each is applied in turn.
+
+Synonym maps apply to `searchable` `Edm.String` and `Collection(Edm.String)` fields. A field
+that names a map it cannot use — one that is not searchable, or holds no text — is rejected when
+the index is created, as is a field naming a map the service does not have. Only the `solr`
+format is supported, which is the only one Azure Search itself supports.
 
 ### Filter semantics
 

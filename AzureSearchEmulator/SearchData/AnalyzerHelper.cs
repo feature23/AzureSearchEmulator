@@ -224,6 +224,32 @@ public static class AnalyzerHelper
     public static Analyzer GetPerFieldSearchAnalyzer(SearchIndex index)
         => GetPerFieldAnalyzer(index, i => i.SearchAnalyzer ?? i.Analyzer);
 
+    /// <summary>
+    /// The search analyzer, with each field's synonym maps applied on top of it (issue #69).
+    /// </summary>
+    /// <remarks>
+    /// Only the search side has this overload. Azure expands synonyms when a query is parsed
+    /// and never while indexing, so there is deliberately no equivalent for
+    /// <see cref="GetPerFieldIndexAnalyzer"/> — see <see cref="Models.SynonymMap"/> for why.
+    ///
+    /// <paramref name="synonymMaps"/> is keyed by name, case-insensitively, and holds every map
+    /// the service currently has; the fields pick out the ones they name.
+    /// </remarks>
+    public static Analyzer GetPerFieldSearchAnalyzer(
+        SearchIndex index,
+        IReadOnlyDictionary<string, Models.SynonymMap> synonymMaps)
+    {
+        if (synonymMaps.Count == 0)
+        {
+            return GetPerFieldSearchAnalyzer(index);
+        }
+
+        return GetPerFieldAnalyzer(
+            index,
+            i => i.SearchAnalyzer ?? i.Analyzer,
+            (field, analyzer) => SynonymMapHelper.Wrap(analyzer, SynonymMapHelper.Resolve(field, synonymMaps)));
+    }
+
     public static Analyzer GetPerFieldIndexAnalyzer(SearchIndex index)
         => GetPerFieldAnalyzer(index, i => i.IndexAnalyzer ?? i.Analyzer);
 
@@ -235,14 +261,34 @@ public static class AnalyzerHelper
     /// they are registered under that path here too — keying them by their bare name would
     /// silently leave them on the default analyzer.
     /// </remarks>
-    private static Analyzer GetPerFieldAnalyzer(SearchIndex index, Func<SearchField, string?> selectAnalyzer)
+    /// <param name="wrap">
+    /// Applied to each field's resolved analyzer, for a caller that needs to add to the chain —
+    /// synonym expansion is the one that does. Fields that name no analyzer at all are included
+    /// when a wrapper is given, because a synonym map on a field that never named an analyzer
+    /// still has to reach the default one.
+    /// </param>
+    private static Analyzer GetPerFieldAnalyzer(
+        SearchIndex index,
+        Func<SearchField, string?> selectAnalyzer,
+        Func<SearchField, Analyzer, Analyzer>? wrap = null)
     {
-        var analyzers = index.Fields
+        var fields = index.Fields
             .SelectMany(i => ComplexTypeSupport.EnumerateLeafFields(i))
-            .Select(i => (i.Path, Analyzer: selectAnalyzer(i.Field)))
-            .Where(i => i.Analyzer != null)
-            .ToDictionary(i => i.Path, i => GetAnalyzer(index, i.Analyzer));
+            .Select(i => (i.Path, i.Field, Analyzer: selectAnalyzer(i.Field)));
 
-        return new PerFieldAnalyzerWrapper(CreateDefault(), analyzers);
+        if (wrap == null)
+        {
+            var named = fields
+                .Where(i => i.Analyzer != null)
+                .ToDictionary(i => i.Path, i => GetAnalyzer(index, i.Analyzer));
+
+            return new PerFieldAnalyzerWrapper(CreateDefault(), named);
+        }
+
+        var wrapped = fields
+            .Select(i => (i.Path, Analyzer: wrap(i.Field, GetAnalyzer(index, i.Analyzer))))
+            .ToDictionary(i => i.Path, i => i.Analyzer);
+
+        return new PerFieldAnalyzerWrapper(CreateDefault(), wrapped);
     }
 }

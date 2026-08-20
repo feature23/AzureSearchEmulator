@@ -6,7 +6,9 @@ namespace AzureSearchEmulator.Controllers;
 
 [ApiController]
 [Route("servicestats")]
-public class ServiceStatsController(ISearchIndexRepository searchIndexRepository) : ControllerBase
+public class ServiceStatsController(
+    ISearchIndexRepository searchIndexRepository,
+    ISynonymMapRepository synonymMapRepository) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get()
@@ -15,6 +17,12 @@ public class ServiceStatsController(ISearchIndexRepository searchIndexRepository
         await foreach (var index in searchIndexRepository.GetAll())
         {
             indexes.Add(index);
+        }
+
+        var synonymMapCount = 0;
+        await foreach (var _ in synonymMapRepository.GetAll())
+        {
+            synonymMapCount++;
         }
         
         var stats = new Dictionary<string, object>
@@ -53,7 +61,7 @@ public class ServiceStatsController(ISearchIndexRepository searchIndexRepository
                 },
                 synonymMaps = new
                 {
-                    usage = 0,
+                    usage = synonymMapCount,
                     quota = 3
                 },
                 skillsetCount = new

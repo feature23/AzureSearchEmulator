@@ -12,6 +12,7 @@ namespace AzureSearchEmulator.Controllers;
 public class IndexesController(
     JsonSerializerOptions jsonSerializerOptions,
     ISearchIndexRepository searchIndexRepository,
+    ISynonymMapRepository synonymMapRepository,
     ILuceneDirectoryFactory luceneDirectoryFactory,
     ILuceneIndexReaderFactory luceneIndexReaderFactory,
     ILuceneIndexWriterFactory luceneIndexWriterFactory)
@@ -83,6 +84,11 @@ public class IndexesController(
             return BadRequest(normalizerError);
         }
 
+        if (await FindInvalidSynonymMapReference(index) is { } synonymMapError)
+        {
+            return BadRequest(synonymMapError);
+        }
+
         try
         {
             await searchIndexRepository.Create(index);
@@ -139,6 +145,11 @@ public class IndexesController(
         if (NormalizerValidator.FindInvalidNormalizer(index) is { } normalizerError)
         {
             return BadRequest(normalizerError);
+        }
+
+        if (await FindInvalidSynonymMapReference(index) is { } synonymMapError)
+        {
+            return BadRequest(synonymMapError);
         }
 
         var existing = await searchIndexRepository.Get(key);
@@ -228,6 +239,27 @@ public class IndexesController(
             ContentType = "application/json",
             StatusCode = statusCode
         };
+    }
+
+    /// <summary>
+    /// Checks the synonym maps the index's fields name against the ones the service holds
+    /// (issue #69).
+    /// </summary>
+    /// <remarks>
+    /// Async, and so kept out of the static validator chain above: unlike every other check
+    /// here, this one cannot be answered from the index definition alone, because a synonym map
+    /// lives outside it.
+    /// </remarks>
+    private async Task<string?> FindInvalidSynonymMapReference(SearchIndex index)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await foreach (var synonymMap in synonymMapRepository.GetAll())
+        {
+            names.Add(synonymMap.Name);
+        }
+
+        return SynonymMapValidator.FindInvalidFieldReference(index, names);
     }
 
     /// <summary>
