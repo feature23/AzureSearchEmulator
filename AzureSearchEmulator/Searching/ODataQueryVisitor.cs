@@ -1,4 +1,5 @@
-﻿using AzureSearchEmulator.Indexing;
+﻿using System.Globalization;
+using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
 using Lucene.Net.Analysis;
@@ -463,6 +464,10 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, doubleValue, doubleValue, true, true),
             decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, (double)decimalValue, (double)decimalValue, true, true),
             bool boolValue => NumericRangeQuery.NewInt32Range(path, boolValue ? 1 : 0, boolValue ? 1 : 0, true, true),
+            // Dates are indexed as Unix milliseconds, so the comparison has to run on the
+            // same encoding rather than on the written form of the literal.
+            DateTimeOffset dateValue => NumericRangeQuery.NewInt64Range(
+                path, dateValue.ToUnixTimeMilliseconds(), dateValue.ToUnixTimeMilliseconds(), true, true),
             _ => throw new NotImplementedException()
         };
     }
@@ -736,16 +741,65 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             delimiters = delimiterString.ToCharArray();
         }
 
-        var values = inList.Split(delimiters);
+        EnsureFilterable(path);
+
+        var values = inList.Split(delimiters, StringSplitOptions.RemoveEmptyEntries);
 
         var query = new BooleanQuery();
 
         foreach (var value in values)
         {
-            query.Add(new TermQuery(new Term(path, value)), Occur.SHOULD);
+            query.Add(HandleEqualComparison(path, ParseSearchInValue(path, value)), Occur.SHOULD);
         }
 
         return query;
+    }
+
+    /// <summary>
+    /// Turns one <c>search.in</c> list entry into a literal typed to match the field.
+    /// </summary>
+    /// <remarks>
+    /// The list always arrives as one string, so every entry is written as text regardless of
+    /// the field's type. Lucene indexes each numeric width, booleans and dates with its own
+    /// encoding, so building a plain term query from the text matches nothing on those fields
+    /// — the silent-empty-result bug in issue #72. Parsing here lets the entry take the same
+    /// path an equivalent <c>eq</c> comparison takes, so the two agree.
+    ///
+    /// A value that will not parse is left as a string, which matches nothing on a numeric
+    /// field. That mirrors Azure, where <c>search.in</c> over a value outside the field's
+    /// domain simply fails to match rather than erroring.
+    /// </remarks>
+    private LiteralToken ParseSearchInValue(string path, string value)
+    {
+        // Azure allows single-quoting entries so a value can contain the delimiter.
+        value = value.Trim();
+
+        if (value.Length > 1 && value.StartsWith('\'') && value.EndsWith('\''))
+        {
+            value = value[1..^1].Replace("''", "'");
+        }
+
+        var field = _index is null ? null : ComplexTypeSupport.FindFieldByPath(_index, path);
+
+        if (field is null)
+        {
+            return new LiteralToken(value);
+        }
+
+        var type = field.IsCollection() ? SearchFieldExtensions.GetCollectionElementType(field.Type) : field.Type;
+
+        object parsed = type switch
+        {
+            "Edm.Int32" when int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) => i,
+            "Edm.Int64" when long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var l) => l,
+            "Edm.Double" when double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) => d,
+            "Edm.Boolean" when bool.TryParse(value, out var b) => b,
+            "Edm.DateTimeOffset" when DateTimeOffset.TryParse(
+                value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto) => dto,
+            _ => value
+        };
+
+        return new LiteralToken(parsed);
     }
 
     /// <summary>
