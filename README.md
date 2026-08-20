@@ -72,6 +72,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
 * Language and custom analyzers: every predefined `LexicalAnalyzerName`, plus custom
   `analyzers`, `tokenizers`, `tokenFilters` and `charFilters` defined on the index
   (see Analyzers below)
+* Normalizers for filter, facet and sort values: every predefined `LexicalNormalizerName`, plus
+  custom `normalizers` defined on the index (see Normalizers below)
 * Vector search: `Collection(Edm.Single)` fields with `vectorSearch` profiles and algorithms,
   `vectorQueries` with all three metrics and both filter modes, and hybrid search fusing text
   and vector rankings with Reciprocal Rank Fusion (see Vector fields below)
@@ -278,6 +280,73 @@ indexed.
   proprietary stack and have no Lucene equivalent.
 * **The `phonetic` token filter**, which lives in a Lucene package this project does not
   reference.
+
+### Normalizers
+
+Filters, facets and `$orderby` compare whole values rather than analyzed tokens, so by default
+`City eq 'las vegas'` does not match a document holding `"Las Vegas"`. A `normalizer` on the
+field folds both sides of that comparison the same way, so the variants match, facet into one
+bucket and sort together.
+
+Normalizers apply to `Edm.String` and `Collection(Edm.String)` fields that are `filterable`,
+`sortable` or `facetable`. They do not affect full-text search — a searchable field's own
+analyzer still decides how its tokens are produced — and they do not change what a search
+returns, which is always the value the document supplied.
+
+All five predefined normalizers are supported: `standard` (lowercase then asciifolding),
+`lowercase`, `uppercase`, `asciifolding` and `elision`.
+
+```jsonc
+{
+  "fields": [
+    {
+      "name": "city", "type": "Edm.String",
+      "filterable": true, "facetable": true, "sortable": true,
+      "normalizer": "lowercase"
+    }
+  ]
+}
+```
+
+Custom normalizers are defined as they are in Azure, under `normalizers`, and compose the same
+`tokenFilters` and `charFilters` a custom analyzer does. They name no tokenizer, because a
+normalizer always produces a single token:
+
+```jsonc
+{
+  "fields": [
+    {
+      "name": "city", "type": "Edm.String", "filterable": true,
+      "normalizer": "my_normalizer"
+    }
+  ],
+  "normalizers": [
+    {
+      "name": "my_normalizer",
+      "@odata.type": "#Microsoft.Azure.Search.CustomNormalizer",
+      "charFilters": ["map_dash"],
+      "tokenFilters": ["asciifolding", "lowercase"]
+    }
+  ],
+  "charFilters": [
+    {
+      "name": "map_dash",
+      "@odata.type": "#Microsoft.Azure.Search.MappingCharFilter",
+      "mappings": ["-=>_"]
+    }
+  ]
+}
+```
+
+Because a normalizer must produce one token, only the filters Azure documents for normalizers
+are accepted: the `mapping` and `pattern_replace` char filters, and the `lowercase`,
+`uppercase`, `asciifolding`, `elision` and language normalization token filters. Anything that
+would split, drop or multiply the token — `ngram`, `stopwords`, `html_strip`, the stemmers — is
+rejected when the index is created, as it is by the service.
+
+A normalizer name that is neither predefined nor defined on the index is also rejected at
+creation, naming the field and the normalizer. As with an analyzer, a field's normalizer is
+fixed once the index exists; changing it requires rebuilding the index.
 * **Options that name a file**, such as a synonym map on disk. Word lists and mappings given
   inline in the index definition work normally.
 

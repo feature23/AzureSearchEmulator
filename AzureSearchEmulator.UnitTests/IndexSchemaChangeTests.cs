@@ -167,11 +167,33 @@ public class IndexSchemaChangeTests
     public void ChangingAnUnmodelledFieldProperty_IsAllowed()
     {
         var existing = Index(
+            """[ { "name": "id", "type": "Edm.String", "key": true, "synonymMaps": ["a"] } ]""");
+
+        var updated = Index(
+            """[ { "name": "id", "type": "Edm.String", "key": true, "synonymMaps": ["b"] } ]""");
+
+        Assert.Null(IndexSchemaChangeValidator.FindDisallowedChange(existing, updated));
+    }
+
+    /// <summary>
+    /// A field's normalizer is fixed once the index exists, as its analyzer is (issue #74).
+    /// </summary>
+    /// <remarks>
+    /// The values already indexed were folded by the old normalizer. A new one would reach the
+    /// query literal only, and compare it against terms it never folded, so the field would
+    /// quietly stop matching rather than start behaving differently.
+    /// </remarks>
+    [Fact]
+    public void ChangingAFieldNormalizer_IsRejected()
+    {
+        var existing = Index(
             """[ { "name": "id", "type": "Edm.String", "key": true, "normalizer": "lowercase" } ]""");
 
         var updated = Index(
             """[ { "name": "id", "type": "Edm.String", "key": true, "normalizer": "uppercase" } ]""");
 
-        Assert.Null(IndexSchemaChangeValidator.FindDisallowedChange(existing, updated));
+        Assert.Equal(
+            "Existing field 'id' cannot be changed.",
+            IndexSchemaChangeValidator.FindDisallowedChange(existing, updated));
     }
 }

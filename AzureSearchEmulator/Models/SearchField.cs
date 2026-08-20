@@ -36,6 +36,22 @@ public class SearchField
 
     public string? IndexAnalyzer { get; set; }
 
+    /// <summary>
+    /// The normalizer applied to this field's filter, facet and sort values (issue #74).
+    /// </summary>
+    /// <remarks>
+    /// Null means none, which is Azure's default and leaves the value compared exactly as it
+    /// was written. Applies only to <c>Edm.String</c> and <c>Collection(Edm.String)</c> fields
+    /// that are filterable, sortable or facetable — a normalizer is what gives those operations
+    /// the case and accent folding that analysis gives a searchable field, and there is nothing
+    /// for it to do on a field none of them can reach.
+    /// <see cref="Indexing.NormalizerValidator"/> enforces that.
+    ///
+    /// It does not affect full-text search: a searchable field's own analyzer still decides
+    /// how its tokens are produced, so the two are independent and a field may carry both.
+    /// </remarks>
+    public string? Normalizer { get; set; }
+
     public IList<string> SynonymMaps { get; set; } = new List<string>();
 
     /// <summary>

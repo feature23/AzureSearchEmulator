@@ -131,6 +131,18 @@ public static class CustomAnalyzerBuilder
         };
 
     /// <summary>
+    /// How a custom analyzer names itself in the messages the component resolution below
+    /// produces.
+    /// </summary>
+    /// <remarks>
+    /// Those messages are shared with <see cref="NormalizerBuilder"/>, which is why they take
+    /// the owner's description rather than composing it themselves: a normalizer reuses the
+    /// same char and token filter resolution, and a message calling it a custom analyzer would
+    /// point at the wrong part of the index definition.
+    /// </remarks>
+    private static string Owner(string name) => $"Custom analyzer '{name}'";
+
+    /// <summary>
     /// Builds the analyzer an index defines under <paramref name="name"/>, or null when it
     /// defines none.
     /// </summary>
@@ -243,11 +255,11 @@ public static class CustomAnalyzerBuilder
         var tokenizerFactory = CreateTokenizerFactory(index, definition);
 
         var tokenFilterFactories = definition.TokenFilters
-            .Select(i => CreateTokenFilterFactory(index, definition, i))
+            .Select(i => CreateTokenFilterFactory(index, Owner(definition.Name), i))
             .ToList();
 
         var charFilterFactories = definition.CharFilters
-            .Select(i => CreateCharFilterFactory(index, definition, i))
+            .Select(i => CreateCharFilterFactory(index, Owner(definition.Name), i))
             .ToList();
 
         return Analyzer.NewAnonymous(
@@ -280,7 +292,7 @@ public static class CustomAnalyzerBuilder
     private static TokenizerFactory CreateTokenizerFactory(SearchIndex index, CustomAnalyzer analyzer)
     {
         var resolved = ResolveComponent(
-            index.Tokenizers, analyzer, analyzer.Tokenizer, TokenizerNames, "tokenizer");
+            index.Tokenizers, Owner(analyzer.Name), analyzer.Tokenizer, TokenizerNames, "tokenizer");
 
         try
         {
@@ -290,17 +302,17 @@ public static class CustomAnalyzerBuilder
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
         {
-            throw ComponentFailure(analyzer, analyzer.Tokenizer, "tokenizer", resolved, ex);
+            throw ComponentFailure(Owner(analyzer.Name), analyzer.Tokenizer, "tokenizer", resolved, ex);
         }
     }
 
-    private static TokenFilterFactory CreateTokenFilterFactory(
+    internal static TokenFilterFactory CreateTokenFilterFactory(
         SearchIndex index,
-        CustomAnalyzer analyzer,
+        string owner,
         string name)
     {
         var resolved = ResolveComponent(
-            index.TokenFilters, analyzer, name, TokenFilterNames, "token filter");
+            index.TokenFilters, owner, name, TokenFilterNames, "token filter");
 
         try
         {
@@ -310,17 +322,17 @@ public static class CustomAnalyzerBuilder
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
         {
-            throw ComponentFailure(analyzer, name, "token filter", resolved, ex);
+            throw ComponentFailure(owner, name, "token filter", resolved, ex);
         }
     }
 
-    private static CharFilterFactory CreateCharFilterFactory(
+    internal static CharFilterFactory CreateCharFilterFactory(
         SearchIndex index,
-        CustomAnalyzer analyzer,
+        string owner,
         string name)
     {
         var resolved = ResolveComponent(
-            index.CharFilters, analyzer, name, CharFilterNames, "char filter");
+            index.CharFilters, owner, name, CharFilterNames, "char filter");
 
         try
         {
@@ -330,7 +342,7 @@ public static class CustomAnalyzerBuilder
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
         {
-            throw ComponentFailure(analyzer, name, "char filter", resolved, ex);
+            throw ComponentFailure(owner, name, "char filter", resolved, ex);
         }
     }
 
@@ -381,15 +393,14 @@ public static class CustomAnalyzerBuilder
     /// </remarks>
     private static ResolvedComponent ResolveComponent(
         IEnumerable<AnalysisComponentDefinition> defined,
-        CustomAnalyzer analyzer,
+        string owner,
         string name,
         IReadOnlyDictionary<string, string> nameMap,
         string kind)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            throw new AnalyzerDefinitionException(
-                $"Custom analyzer '{analyzer.Name}' names an empty {kind}.");
+            throw new AnalyzerDefinitionException($"{owner} names an empty {kind}.");
         }
 
         var definition = defined.FirstOrDefault(
@@ -405,7 +416,7 @@ public static class CustomAnalyzerBuilder
         if (UnsupportedComponents.Contains(typeName) || UnsupportedComponents.Contains(name))
         {
             throw new AnalyzerDefinitionException(
-                $"Custom analyzer '{analyzer.Name}' names {kind} '{name}', which is not " +
+                $"{owner} names {kind} '{name}', which is not " +
                 "supported: it has no Lucene equivalent in the emulator.");
         }
 
@@ -638,13 +649,26 @@ public static class CustomAnalyzerBuilder
         /// Wraps a mapping rule's side in the quotes Lucene's parser requires, unless the client
         /// already did.
         /// </summary>
+        /// <remarks>
+        /// Only the whitespace around an already-quoted side is trimmed, never the value's own.
+        /// Azure documents mapping a space away as <c>"\u0020=&gt;"</c>, and trimming an
+        /// unquoted side would reduce that rule to an empty match — which Lucene rejects
+        /// outright as "cannot match the empty string", refusing a mapping the service accepts.
+        ///
+        /// A backslash escape is passed through rather than re-escaped, because Lucene's own
+        /// parser is what decodes it: doubling the backslash would turn <c>\u0020</c> into the
+        /// six literal characters instead of a space.
+        /// </remarks>
         private static string Quote(string value)
         {
             var trimmed = value.Trim();
 
-            return trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"')
-                ? trimmed
-                : $"\"{trimmed.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"";
+            if (trimmed.Length >= 2 && trimmed.StartsWith('"') && trimmed.EndsWith('"'))
+            {
+                return trimmed;
+            }
+
+            return $"\"{value.Replace("\"", "\\\"")}\"";
         }
     }
 
@@ -688,7 +712,7 @@ public static class CustomAnalyzerBuilder
     /// lowercased, which is what lets the built-in components resolve without a mapping entry
     /// each.
     /// </remarks>
-    private static string StripODataPrefix(string odataType)
+    internal static string StripODataPrefix(string odataType)
     {
         var name = odataType;
 
@@ -726,7 +750,7 @@ public static class CustomAnalyzerBuilder
     ];
 
     private static AnalyzerDefinitionException ComponentFailure(
-        CustomAnalyzer analyzer,
+        string owner,
         string name,
         string kind,
         ResolvedComponent resolved,
@@ -740,7 +764,7 @@ public static class CustomAnalyzerBuilder
         if (resolved.IsBareReference && RequiredOptions.TryGetValue(resolved.SpiName, out var required))
         {
             return new AnalyzerDefinitionException(
-                $"Custom analyzer '{analyzer.Name}' names {kind} '{name}' on its own, but Azure " +
+                $"{owner} names {kind} '{name}' on its own, but Azure " +
                 $"gives '{required}' no default, so it cannot be used without a definition. " +
                 $"Define the {kind} with '{required}' set and name that definition instead.",
                 cause);
@@ -752,7 +776,7 @@ public static class CustomAnalyzerBuilder
         // missing required option, so the message says what the emulator actually knows and
         // keeps Lucene's text as the inner exception.
         return new AnalyzerDefinitionException(
-            $"Custom analyzer '{analyzer.Name}' names {kind} '{name}', which the emulator could " +
+            $"{owner} names {kind} '{name}', which the emulator could " +
             "not build. Check that the name is a supported built-in and that any required " +
             "options are set.",
             cause);

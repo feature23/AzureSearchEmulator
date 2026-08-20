@@ -511,8 +511,27 @@ public class LuceneNetIndexSearcher(ILuceneIndexReaderFactory indexReaderFactory
                 $"Field '{fieldName}' cannot be sorted on because '{collectionPath}' is a {ComplexTypeSupport.ComplexCollectionType}.");
         }
 
-        return new SortField(fieldPath, GetSortFieldType(field), descending);
+        return new SortField(GetSortFieldName(field, fieldPath), GetSortFieldType(field), descending);
     }
+
+    /// <summary>
+    /// The Lucene field an <c>$orderby</c> reads, which for a string is the unanalyzed sidecar
+    /// rather than the field's own name.
+    /// </summary>
+    /// <remarks>
+    /// A searchable string shares its name between the analyzed tokens and the exact-value
+    /// copy, and Lucene orders a document by the lowest term stored under the name — so
+    /// ordering by the name itself sorts "Las Vegas" under "las", by whichever of its words
+    /// happens to sort first, rather than by the value. The sidecar carries exactly one term
+    /// per document, and it is the copy a normalizer was applied to, so ordering reads the same
+    /// folded value a filter compares (issue #74). Ranges already read it, for the same reason.
+    ///
+    /// Only strings have the sidecar; every other type is indexed once under its own name.
+    /// </remarks>
+    private static string GetSortFieldName(SearchField field, string fieldPath)
+        => field.Type == "Edm.String"
+            ? SearchFieldExtensions.GetRawStringFieldName(fieldPath)
+            : fieldPath;
 
     /// <summary>
     /// Builds the sort for a <c>search.score() asc|desc</c> order-by clause, which orders by
