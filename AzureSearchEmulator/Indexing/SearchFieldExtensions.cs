@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Searching;
+using AzureSearchEmulator.SearchData;
 using Lucene.Net.Documents;
 using Lucene.Net.Index;
 using Lucene.Net.Util;
@@ -10,8 +11,11 @@ namespace AzureSearchEmulator.Indexing;
 
 public static class SearchFieldExtensions
 {
-    public static IEnumerable<IIndexableField> CreateFields(this SearchField field, JsonNode value)
-        => CreateFields(field, value, field.Name);
+    public static IEnumerable<IIndexableField> CreateFields(
+        this SearchField field,
+        JsonNode value,
+        SearchIndex? index = null)
+        => CreateFields(field, value, field.Name, index);
 
     /// <summary>
     /// Creates the Lucene fields for <paramref name="value"/>, indexing them under
@@ -22,11 +26,15 @@ public static class SearchFieldExtensions
     /// sub-field is indexed under its full slash-delimited path (i.e. <c>Address/City</c>)
     /// so that filters written against that path resolve to a real Lucene field.
     /// </remarks>
-    private static IEnumerable<IIndexableField> CreateFields(SearchField field, JsonNode value, string path)
+    private static IEnumerable<IIndexableField> CreateFields(
+        SearchField field,
+        JsonNode value,
+        string path,
+        SearchIndex? index)
     {
         if (field.IsComplex())
         {
-            return CreateComplexFields(field, value, path);
+            return CreateComplexFields(field, value, path, index);
         }
 
         if (field.IsVectorField())
@@ -38,21 +46,25 @@ public static class SearchFieldExtensions
 
         if (field.Type.StartsWith("Collection(", StringComparison.Ordinal))
         {
-            return CreateCollectionFields(field, value, path);
+            return CreateCollectionFields(field, value, path, index);
         }
 
-        return CreateSingleValueFields(field, value, path);
+        return CreateSingleValueFields(field, value, path, index);
     }
 
-    private static IEnumerable<IIndexableField> CreateSingleValueFields(SearchField field, JsonNode value, string path)
+    private static IEnumerable<IIndexableField> CreateSingleValueFields(
+        SearchField field,
+        JsonNode value,
+        string path,
+        SearchIndex? index)
     {
         var stored = field.Retrievable ? Field.Store.YES : Field.Store.NO;
 
         if (field.Type == "Edm.String")
         {
             var str = value.GetValue<string>();
-            return CreateStringFields(field, str, stored, path)
-                .Concat(CreateFacetFields(field, field.Type, value, path));
+            return CreateStringFields(field, str, stored, path, index)
+                .Concat(CreateFacetFields(field, field.Type, value, path, index));
         }
 
         if (field.Type == GeoSupport.GeographyPointType)
@@ -64,14 +76,18 @@ public static class SearchFieldExtensions
         }
 
         return new[] { CreateScalarField(field.Type, value, stored, path) }
-            .Concat(CreateFacetFields(field, field.Type, value, path));
+            .Concat(CreateFacetFields(field, field.Type, value, path, index));
     }
 
     /// <summary>
     /// Flattens a complex value (or a collection of them) into one Lucene field per leaf,
     /// plus a stored JSON sidecar used to reconstruct the original object on retrieval.
     /// </summary>
-    private static IEnumerable<IIndexableField> CreateComplexFields(SearchField field, JsonNode value, string path)
+    private static IEnumerable<IIndexableField> CreateComplexFields(
+        SearchField field,
+        JsonNode value,
+        string path,
+        SearchIndex? index)
     {
         var fields = new List<IIndexableField>();
 
@@ -95,7 +111,7 @@ public static class SearchFieldExtensions
                 // cheap candidate filter, but it does not preserve which values belonged to
                 // the same element, so the elements are also written whole (below) for the
                 // lambda filter to correlate against.
-                fields.AddRange(CreateComplexObjectFields(field, element, path));
+                fields.AddRange(CreateComplexObjectFields(field, element, path, index));
             }
 
             // Written regardless of retrievability: this is what filters read, and a hidden
@@ -106,7 +122,7 @@ public static class SearchFieldExtensions
         }
         else
         {
-            fields.AddRange(CreateComplexObjectFields(field, value, path));
+            fields.AddRange(CreateComplexObjectFields(field, value, path, index));
         }
 
         if (field.Retrievable)
@@ -124,7 +140,11 @@ public static class SearchFieldExtensions
     /// skipped, and JSON properties with no matching sub-field are ignored, matching how
     /// Azure Search treats a document that does not populate every declared field.
     /// </summary>
-    private static IEnumerable<IIndexableField> CreateComplexObjectFields(SearchField field, JsonNode value, string path)
+    private static IEnumerable<IIndexableField> CreateComplexObjectFields(
+        SearchField field,
+        JsonNode value,
+        string path,
+        SearchIndex? index)
     {
         if (value is not JsonObject obj)
         {
@@ -153,7 +173,7 @@ public static class SearchFieldExtensions
             // overwrite itself once per outer element and throw at commit. The nested
             // elements are reachable inside the outer field's own copy, which is how the
             // lambda evaluator recurses into them.
-            foreach (var indexField in CreateFields(subField, subValue, subPath))
+            foreach (var indexField in CreateFields(subField, subValue, subPath, index))
             {
                 if (subField.IsComplex()
                     && (indexField.Name == ComplexTypeSupport.GetComplexStorageFieldName(subPath)
@@ -184,7 +204,11 @@ public static class SearchFieldExtensions
         return VectorSearchSupport.CreateFields(path, (JsonArray)value, vector);
     }
 
-    private static IEnumerable<IIndexableField> CreateCollectionFields(SearchField field, JsonNode value, string path)
+    private static IEnumerable<IIndexableField> CreateCollectionFields(
+        SearchField field,
+        JsonNode value,
+        string path,
+        SearchIndex? index)
     {
         if (value is not JsonArray array)
         {
@@ -212,8 +236,8 @@ public static class SearchFieldExtensions
 
             if (elementType == "Edm.String")
             {
-                fields.AddRange(CreateStringFields(field, element.GetValue<string>(), stored, path));
-                fields.AddRange(CreateFacetFields(field, elementType, element, path));
+                fields.AddRange(CreateStringFields(field, element.GetValue<string>(), stored, path, index));
+                fields.AddRange(CreateFacetFields(field, elementType, element, path, index));
             }
             else if (elementType == GeoSupport.GeographyPointType)
             {
@@ -225,7 +249,7 @@ public static class SearchFieldExtensions
             else
             {
                 fields.Add(CreateScalarField(elementType, element, stored, path));
-                fields.AddRange(CreateFacetFields(field, elementType, element, path));
+                fields.AddRange(CreateFacetFields(field, elementType, element, path, index));
             }
         }
 
@@ -237,29 +261,71 @@ public static class SearchFieldExtensions
         return fields;
     }
 
-    private static IEnumerable<IIndexableField> CreateStringFields(SearchField field, string str, Field.Store stored, string path)
+    /// <summary>
+    /// Writes the Lucene copies of one string value: the analyzed copy a search reads, and the
+    /// exact-value copies a filter, sort or facet reads.
+    /// </summary>
+    /// <remarks>
+    /// The exact-value copies are written through the field's normalizer and the analyzed copy
+    /// is not (issue #74). The two serve different comparisons: a search matches tokens the
+    /// field's analyzer produced, while a filter compares one whole value, and it is only the
+    /// latter that a normalizer is defined to fold. Normalizing the analyzed copy as well would
+    /// put the normalizer ahead of the analyzer in a chain Azure keeps separate.
+    ///
+    /// The stored copy is deliberately among the ones left alone: it is what a search result
+    /// returns, and Azure returns the value as it was supplied, not as it was folded for
+    /// comparison. Where the value is stored under the analyzed copy that falls out naturally;
+    /// where the field is not searchable, the normalized copy is written separately so the
+    /// stored one still carries the original.
+    /// </remarks>
+    private static IEnumerable<IIndexableField> CreateStringFields(
+        SearchField field,
+        string str,
+        Field.Store stored,
+        string path,
+        SearchIndex? index)
     {
         var searchable = field.Searchable.GetValueOrDefault(true);
         var filterable = field.Filterable;
+        var comparable = filterable || field.Sortable.GetValueOrDefault() || field.Facetable.GetValueOrDefault();
+
+        var normalized = comparable ? NormalizerHelper.Normalize(index, field, str) : str;
 
         if (searchable)
         {
             yield return new TextField(path, str, stored);
             // Filter/sort/facet require a non-analyzed copy under the same field name
             // so TermQuery-based filters match the raw literal (matches Azure semantics).
-            if (filterable || field.Sortable.GetValueOrDefault() || field.Facetable.GetValueOrDefault())
+            if (comparable)
             {
-                yield return new StringField(path, str, Field.Store.NO);
+                yield return new StringField(path, normalized, Field.Store.NO);
             }
         }
-        else
+        else if (normalized == str)
         {
             yield return new StringField(path, str, stored);
         }
-
-        if (filterable)
+        else
         {
-            yield return new StringField(GetRawStringFieldName(path), str, Field.Store.NO);
+            // The value the field is compared on and the value it returns have diverged, so
+            // they need a field each: the indexed copy carries the normalized term, and the
+            // stored copy keeps what the document supplied.
+            yield return new StringField(path, normalized, Field.Store.NO);
+
+            if (stored == Field.Store.YES)
+            {
+                yield return new StoredField(path, str);
+            }
+        }
+
+        // Written for a sortable field as well as a filterable one. A sort over a searchable
+        // field cannot read the field's own name: that name carries the analyzed tokens beside
+        // the exact-value copy, and Lucene orders a document by the lowest term under the name,
+        // so a multi-token value would sort by whichever of its words came first alphabetically.
+        // The sidecar holds one term per document, which is what an ordering needs.
+        if (filterable || field.IsSortable())
+        {
+            yield return new StringField(GetRawStringFieldName(path), normalized, Field.Store.NO);
         }
     }
 
@@ -307,7 +373,8 @@ public static class SearchFieldExtensions
         SearchField field,
         string type,
         JsonNode value,
-        string path)
+        string path,
+        SearchIndex? index)
     {
         if (!field.Facetable.GetValueOrDefault())
         {
@@ -316,7 +383,10 @@ public static class SearchFieldExtensions
 
         object? facetValue = type switch
         {
-            "Edm.String" => value.GetValue<string>(),
+            // Normalized so that the values counted are the folded ones: without this a field
+            // whose normalizer lowercases would still report "Las Vegas" and "LAS VEGAS" as two
+            // distinct buckets, which is the case the feature exists to fix (issue #74).
+            "Edm.String" => NormalizerHelper.Normalize(index, field, value.GetValue<string>()),
             "Edm.Int32" => value.GetValue<int>(),
             "Edm.Int64" => value.GetValue<long>(),
             "Edm.Double" => value.GetValue<double>(),

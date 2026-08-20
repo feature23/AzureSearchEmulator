@@ -57,6 +57,19 @@ public class SearchIndex
     public IList<LexicalAnalyzerDefinition> Analyzers { get; init; } = new List<LexicalAnalyzerDefinition>();
 
     /// <summary>
+    /// Normalizers the index defines for its fields to name, beyond the predefined ones
+    /// (issue #74).
+    /// </summary>
+    /// <remarks>
+    /// Empty on an index that uses only predefined normalizer names or none at all, which is
+    /// the common case. A field's normalizer resolves against this list first, and as with
+    /// <see cref="Analyzers"/> nothing is shadowed by that:
+    /// <see cref="Indexing.NormalizerValidator"/> refuses a definition that takes a predefined
+    /// name.
+    /// </remarks>
+    public IList<NormalizerDefinition> Normalizers { get; init; } = new List<NormalizerDefinition>();
+
+    /// <summary>
     /// Tokenizers a <see cref="CustomAnalyzer"/> can build on (issue #34).
     /// </summary>
     public IList<AnalysisComponentDefinition> Tokenizers { get; init; } = new List<AnalysisComponentDefinition>();
@@ -79,6 +92,16 @@ public class SearchIndex
     /// </remarks>
     public LexicalAnalyzerDefinition? FindAnalyzer(string name)
         => Analyzers.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Finds a normalizer the index defines, or null when it defines none by that name
+    /// (issue #74).
+    /// </summary>
+    /// <remarks>
+    /// Matched case-insensitively, as <see cref="FindAnalyzer"/> is.
+    /// </remarks>
+    public NormalizerDefinition? FindNormalizer(string name)
+        => Normalizers.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Index properties the emulator does not model, kept verbatim so they survive a

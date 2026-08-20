@@ -433,6 +433,17 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
         var type = field.IsCollection() ? SearchFieldExtensions.GetCollectionElementType(field.Type) : field.Type;
 
+        // A string literal is compared against the copies written through the field's
+        // normalizer, so the same fold has to reach the literal for the two to meet as one
+        // term (issue #74). Nothing else is normalized: a normalizer applies only to string
+        // fields, and the validator refuses it anywhere else.
+        if (literalToken.Value is string stringValue)
+        {
+            var normalized = NormalizerHelper.Normalize(_index, field, stringValue);
+
+            return normalized == stringValue ? literalToken : new LiteralToken(normalized);
+        }
+
         // Only widen numerics; strings, booleans and dates already line up with how they
         // were indexed.
         if (!TryGetDouble(literalToken.Value, out var numeric))
@@ -667,7 +678,11 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
             {
                 if (value.StartsWith('\'') || value.StartsWith('\"'))
                 {
-                    query.Add(new TermQuery(new Term(path, value.Trim('\'', '\"'))), Occur.SHOULD);
+                    // Normalized like every other string literal, so an `in` list folds the
+                    // same way an `eq` against the same field does (issue #74).
+                    var literal = CoerceLiteralToFieldType(path, new LiteralToken(value.Trim('\'', '\"')));
+
+                    query.Add(HandleEqualComparison(path, literal), Occur.SHOULD);
                 }
                 else
                 {
@@ -749,7 +764,9 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
 
         foreach (var value in values)
         {
-            query.Add(HandleEqualComparison(path, ParseSearchInValue(path, value)), Occur.SHOULD);
+            query.Add(
+                HandleEqualComparison(path, CoerceLiteralToFieldType(path, ParseSearchInValue(path, value))),
+                Occur.SHOULD);
         }
 
         return query;

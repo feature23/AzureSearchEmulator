@@ -60,7 +60,7 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
         return from f in index.Fields
             join v in Item on f.Name equals v.Key
             where v.Value != null
-            from indexField in f.CreateFields(v.Value!) // [!]: null checked by where clause
+            from indexField in f.CreateFields(v.Value!, index) // [!]: null checked by where clause
             select indexField;
     }
 

@@ -78,6 +78,11 @@ public class IndexesController(
             return BadRequest(analyzerError);
         }
 
+        if (NormalizerValidator.FindInvalidNormalizer(index) is { } normalizerError)
+        {
+            return BadRequest(normalizerError);
+        }
+
         try
         {
             await searchIndexRepository.Create(index);
@@ -129,6 +134,11 @@ public class IndexesController(
         if (AnalyzerValidator.FindInvalidAnalyzer(index) is { } analyzerError)
         {
             return BadRequest(analyzerError);
+        }
+
+        if (NormalizerValidator.FindInvalidNormalizer(index) is { } normalizerError)
+        {
+            return BadRequest(normalizerError);
         }
 
         var existing = await searchIndexRepository.Get(key);

@@ -82,5 +82,10 @@ public static class IndexSchemaChangeValidator
            || existing.Dimensions != updated.Dimensions
            || !string.Equals(existing.Analyzer, updated.Analyzer, StringComparison.Ordinal)
            || !string.Equals(existing.SearchAnalyzer, updated.SearchAnalyzer, StringComparison.Ordinal)
-           || !string.Equals(existing.IndexAnalyzer, updated.IndexAnalyzer, StringComparison.Ordinal);
+           || !string.Equals(existing.IndexAnalyzer, updated.IndexAnalyzer, StringComparison.Ordinal)
+           // Fixed for the same reason an analyzer is: the values already indexed were written
+           // through the old normalizer, so a new one would be applied to the query literal
+           // alone and compared against terms it never folded. Azure documents rebuilding the
+           // index as the only way to change it (issue #74).
+           || !string.Equals(existing.Normalizer, updated.Normalizer, StringComparison.Ordinal);
 }
