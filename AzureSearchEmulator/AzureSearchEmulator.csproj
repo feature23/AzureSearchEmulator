@@ -8,7 +8,19 @@
 		<Version>1.0.0-beta</Version>
 		<WarningsAsErrors>Nullable</WarningsAsErrors>
 		<LangVersion>14</LangVersion>
-		<IsPackable>false</IsPackable>
+		<IsPackable>true</IsPackable>
+		<PackAsTool>true</PackAsTool>
+		<ToolCommandName>azsearchemu</ToolCommandName>
+		<PackageId>AzureSearchEmulator</PackageId>
+		<PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+		<RepositoryUrl>https://github.com/feature23/azuresearchemulator</RepositoryUrl>
+		<PackageTags>azure search emulator ai cognitive-search</PackageTags>
+		<Description>A local emulator for Azure AI Search, runnable as a .NET tool.</Description>
+		<Company>feature[23]</Company>
+		<Copyright>Copyright (c) feature[23] 2025</Copyright>
+		<Authors>Paul Irwin</Authors>
+		<PackageIcon>logo.png</PackageIcon>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -30,6 +42,25 @@
 	  <None Update="aspnetapp.pfx">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </None>
+	</ItemGroup>
+
+	<!--
+	  The bundled certificate exists for the Docker image, which mounts it via
+	  ASPNETCORE_Kestrel__Certificates__Default__Path, and its password is public knowledge in
+	  docker-compose.yml. A `dotnet tool` package is built from the publish output, so without
+	  this the private key would ship to everyone who installs the tool. The Dockerfile copies
+	  from the publish output too, so the exclusion is conditioned on _IsPacking — the SDK's own
+	  flag for a pack, which `dotnet publish` does not set — leaving the container build intact.
+	-->
+	<ItemGroup Condition="'$(_IsPacking)' == 'true'">
+	  <None Update="aspnetapp.pfx">
+	    <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+	  </None>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="../logo.png" Pack="true" PackagePath="\" />
+	  <None Include="../README.md" Pack="true" PackagePath="\" />
 	</ItemGroup>
 
 </Project>
