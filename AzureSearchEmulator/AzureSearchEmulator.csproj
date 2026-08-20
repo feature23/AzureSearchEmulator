@@ -39,26 +39,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <None Update="aspnetapp.pfx">
-	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	  </None>
-	</ItemGroup>
-
-	<!--
-	  The bundled certificate exists for the Docker image, which mounts it via
-	  ASPNETCORE_Kestrel__Certificates__Default__Path, and its password is public knowledge in
-	  docker-compose.yml. A `dotnet tool` package is built from the publish output, so without
-	  this the private key would ship to everyone who installs the tool. The Dockerfile copies
-	  from the publish output too, so the exclusion is conditioned on _IsPacking — the SDK's own
-	  flag for a pack, which `dotnet publish` does not set — leaving the container build intact.
-	-->
-	<ItemGroup Condition="'$(_IsPacking)' == 'true'">
-	  <None Update="aspnetapp.pfx">
-	    <CopyToPublishDirectory>Never</CopyToPublishDirectory>
-	  </None>
-	</ItemGroup>
-
-	<ItemGroup>
 	  <None Include="../logo.png" Pack="true" PackagePath="\" />
 	  <None Include="../README.md" Pack="true" PackagePath="\" />
 	</ItemGroup>

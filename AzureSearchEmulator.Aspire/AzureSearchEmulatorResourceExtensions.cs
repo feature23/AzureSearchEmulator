@@ -30,6 +30,7 @@ public static class AzureSearchEmulatorResourceExtensions
         {
             var resource = new AzureSearchEmulatorResource(name);
 
+#pragma warning disable ASPIRECERTIFICATES001 // WithHttpsDeveloperCertificate is experimental; see comment below.
             var resourceBuilder = builder.AddResource(resource)
                 .WithImage("feature23/azuresearchemulator")
                 .WithImageTag("latest")
@@ -37,8 +38,24 @@ public static class AzureSearchEmulatorResourceExtensions
                 .WithHttpEndpoint(port: httpPort, targetPort: AzureSearchEmulatorResource.DefaultHttpPort, env: "HTTP_PORTS")
                 .WithHttpsEndpoint(port: httpsPort, targetPort: AzureSearchEmulatorResource.DefaultHttpsPort, env: "HTTPS_PORTS")
                 .WithEnvironment("ASPNETCORE_URLS", $"https://+:{resource.GetEndpoint("https").Property(EndpointProperty.Port)};http://+:{resource.GetEndpoint("http").Property(EndpointProperty.Port)}")
-                .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Password", "password")
-                .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/app/aspnetapp.pfx");
+                // The Azure Search SDK rejects http:// endpoints in its client constructors, so the
+                // HTTPS endpoint has to present a certificate the host already trusts. This used to
+                // point Kestrel at a certificate baked into the image, which no host had any reason
+                // to trust — so SDK calls over that endpoint could never validate. (It had also
+                // silently expired in 2022, which went unnoticed because nothing validated it.)
+                //
+                // Aspire provisions the machine's ASP.NET Core development certificate into the
+                // container instead. Because that is the same certificate `dotnet dev-certs https
+                // --trust` already installed, SDK calls validate without any bypass, and there is no
+                // certificate in the image to go stale. Aspire also reports an actionable message
+                // when no trusted development certificate is present, rather than failing the TLS
+                // handshake at run time.
+                //
+                // The API is still marked experimental by Aspire, so the diagnostic is suppressed
+                // narrowly here rather than project-wide: if a future Aspire release changes or
+                // removes it, this is the one call site to revisit.
+                .WithHttpsDeveloperCertificate();
+#pragma warning restore ASPIRECERTIFICATES001
 
             return resourceBuilder;
         }
