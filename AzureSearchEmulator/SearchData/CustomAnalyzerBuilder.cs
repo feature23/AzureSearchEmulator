@@ -290,7 +290,7 @@ public static class CustomAnalyzerBuilder
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
         {
-            throw ComponentFailure(analyzer, analyzer.Tokenizer, "tokenizer", ex);
+            throw ComponentFailure(analyzer, analyzer.Tokenizer, "tokenizer", resolved, ex);
         }
     }
 
@@ -310,7 +310,7 @@ public static class CustomAnalyzerBuilder
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
         {
-            throw ComponentFailure(analyzer, name, "token filter", ex);
+            throw ComponentFailure(analyzer, name, "token filter", resolved, ex);
         }
     }
 
@@ -330,7 +330,7 @@ public static class CustomAnalyzerBuilder
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
         {
-            throw ComponentFailure(analyzer, name, "char filter", ex);
+            throw ComponentFailure(analyzer, name, "char filter", resolved, ex);
         }
     }
 
@@ -361,10 +361,14 @@ public static class CustomAnalyzerBuilder
     /// <param name="Resources">
     /// Virtual files backing the options Azure supplies inline but Lucene reads from a path.
     /// </param>
+    /// <param name="IsBareReference">
+    /// The name resolved directly to a built-in, with nothing in the index defining it.
+    /// </param>
     private sealed record ResolvedComponent(
         string SpiName,
         IDictionary<string, string> Args,
-        IDictionary<string, string> Resources);
+        IDictionary<string, string> Resources,
+        bool IsBareReference);
 
     /// <summary>
     /// Resolves a component the analyzer names into the Lucene SPI name and the arguments its
@@ -414,6 +418,15 @@ public static class CustomAnalyzerBuilder
             [MatchVersionArg] = MatchVersionValue
         };
 
+        // Seeded before the definition's own options so that anything spelled out there wins.
+        if (ComponentDefaults.TryGetValue(spiName, out var defaults))
+        {
+            foreach (var (option, value) in defaults)
+            {
+                args[option] = value;
+            }
+        }
+
         var resources = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var (key, value) in definition?.AdditionalProperties ?? [])
@@ -447,8 +460,75 @@ public static class CustomAnalyzerBuilder
             args[optionName] = argument;
         }
 
-        return new ResolvedComponent(spiName, args, resources);
+        return new ResolvedComponent(spiName, args, resources, definition is null);
     }
+
+    /// <summary>
+    /// Arguments Azure treats as optional-with-a-default that the Lucene factory requires.
+    /// </summary>
+    /// <remarks>
+    /// Naming a built-in without defining it is how Azure says "use this with its defaults",
+    /// and for most components that works here, because the Lucene factory defaults the same
+    /// options. These are the ones where it does not: the factory throws
+    /// <c>missing parameter</c> for an option Azure documents a default for, so the bare form
+    /// of a perfectly valid Azure definition fails at index creation (issue #73).
+    ///
+    /// Only components whose options are <em>all</em> optional in Azure belong here. Several
+    /// others also fail bare — <c>pattern_replace</c>, <c>pattern_capture</c>, <c>synonym</c>
+    /// and <c>dictionary_decompounder</c> — but Azure marks their central option required, so
+    /// rejecting them is correct and defaulting them would invent behaviour Azure does not
+    /// have. <see cref="RequiredOptions"/> only improves what a bare reference to one of them
+    /// is rejected with.
+    ///
+    /// Keyed by SPI name, so a definition and a bare name resolve to the same defaults.
+    /// </remarks>
+    private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> ComponentDefaults =
+        new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal)
+        {
+            // Azure: pattern defaults to \W+ (runs of non-word characters) and group to -1,
+            // which treats the expression as a separator rather than as the token itself. The
+            // same defaults the built-in "pattern" analyzer is given in AnalyzerHelper.
+            ["pattern"] = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["pattern"] = @"\W+",
+                ["group"] = "-1",
+            },
+
+            // Azure: min 0, max 300 — the same ceiling it puts on a maxTokenLength.
+            ["length"] = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["min"] = "0",
+                ["max"] = AnalysisComponentJson.MaxTokenLengthLimit.ToString(),
+            },
+
+            // Azure: maxTokenCount 1. Aggressive, but it is what the service documents, and a
+            // chain naming "limit" bare gets the same one token there.
+            ["limittokencount"] = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["maxTokenCount"] = "1",
+            },
+        };
+
+    /// <summary>
+    /// The option Azure marks required on a component, keyed by SPI name, spelled as an index
+    /// definition would spell it.
+    /// </summary>
+    /// <remarks>
+    /// These are the components that cannot be named on their own, because Azure gives their
+    /// central option no default to fall back on. Lucene reports the omission by wrapping the
+    /// factory's <c>missing parameter</c> complaint in an <c>SPI class ... cannot be
+    /// instantiated ... likely due to a missing reference of the .NET Assembly</c> message,
+    /// which sends the reader looking for a packaging problem that is not there. Naming the
+    /// option lets the error say what a bare reference actually left out (issue #73).
+    /// </remarks>
+    private static readonly IReadOnlyDictionary<string, string> RequiredOptions =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["patternreplace"] = "pattern",
+            ["patterncapturegroup"] = "patterns",
+            ["synonym"] = "synonyms",
+            ["dictionarycompoundword"] = "wordList",
+        };
 
     /// <summary>
     /// Azure writes an n-gram's bounds as <c>minGram</c>/<c>maxGram</c>; Lucene's factories read
@@ -649,8 +729,23 @@ public static class CustomAnalyzerBuilder
         CustomAnalyzer analyzer,
         string name,
         string kind,
+        ResolvedComponent resolved,
         Exception cause)
     {
+        // A bare reference to a component whose required option has no default is a cause the
+        // emulator can name exactly, so it is reported on its own rather than folded into the
+        // general advice below. Only when the reference is bare: once a definition supplies
+        // options, whether one of them satisfies the factory is between the two of them, and
+        // claiming a supplied option is missing would send the reader somewhere useless.
+        if (resolved.IsBareReference && RequiredOptions.TryGetValue(resolved.SpiName, out var required))
+        {
+            return new AnalyzerDefinitionException(
+                $"Custom analyzer '{analyzer.Name}' names {kind} '{name}' on its own, but Azure " +
+                $"gives '{required}' no default, so it cannot be used without a definition. " +
+                $"Define the {kind} with '{required}' set and name that definition instead.",
+                cause);
+        }
+
         // Lucene reports both an unknown SPI name and a failure to construct a known one as the
         // same "cannot be instantiated" ArgumentException, mentioning a missing assembly. That
         // is a misleading thing to hand back for what is nearly always a mistyped name or a
