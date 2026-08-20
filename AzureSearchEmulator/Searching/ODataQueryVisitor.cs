@@ -14,9 +14,22 @@ using Operator = Lucene.Net.QueryParsers.Flexible.Standard.Config.StandardQueryC
 
 namespace AzureSearchEmulator.Searching;
 
-public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisitor<Query>
+public class ODataQueryVisitor(
+    SearchIndex? index = null,
+    IReadOnlyDictionary<string, Models.SynonymMap>? synonymMaps = null) : ISyntacticTreeVisitor<Query>
 {
     private readonly SearchIndex? _index = index;
+
+    /// <summary>
+    /// The synonym maps a <c>search.ismatch</c> inside a filter expands its terms with
+    /// (issue #69).
+    /// </summary>
+    /// <remarks>
+    /// Defaulted to none so the many callers that parse a filter with no full-text function in
+    /// it — and the tests that construct this directly — need not supply any.
+    /// </remarks>
+    private readonly IReadOnlyDictionary<string, Models.SynonymMap> _synonymMaps =
+        synonymMaps ?? new Dictionary<string, Models.SynonymMap>();
 
     // When walking into a lambda (any/all), pushes the (path, parameter) context so that
     // child RangeVariableTokens can be resolved back to the collection's field path.
@@ -1176,7 +1189,7 @@ public class ODataQueryVisitor(SearchIndex? index = null) : ISyntacticTreeVisito
         }
 
         // Get the analyzer for this index
-        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(_index);
+        var analyzer = AnalyzerHelper.GetPerFieldSearchAnalyzer(_index, _synonymMaps);
 
         // Parse the search text
         var query = queryType switch

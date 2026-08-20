@@ -89,6 +89,7 @@ builder.Services.AddTransient(sp =>
 });
 
 builder.Services.AddTransient<ISearchIndexRepository, FileSearchIndexRepository>();
+builder.Services.AddTransient<ISynonymMapRepository, FileSynonymMapRepository>();
 builder.Services.AddSingleton<ILuceneDirectoryFactory, SimpleFSDirectoryFactory>();
 builder.Services.AddSingleton<ILuceneIndexReaderFactory, LuceneDirectoryReaderFactory>();
 // Singleton so writers stay open across requests; the container disposes it on shutdown,
