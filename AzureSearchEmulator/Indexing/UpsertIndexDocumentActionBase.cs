@@ -10,6 +10,17 @@ namespace AzureSearchEmulator.Indexing;
 
 public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocumentAction(item)
 {
+    /// <summary>
+    /// The index fields this batch item set to an explicit null, populated before
+    /// <see cref="IndexDocument"/> runs so a merge can clear them (issue #71).
+    /// </summary>
+    /// <remarks>
+    /// Carried on the action rather than added to <see cref="IndexDocument"/>'s signature
+    /// because only the merge actions have any use for it; upload replaces the whole document,
+    /// where a null means "no value" and there is nothing to clear.
+    /// </remarks>
+    protected IReadOnlyCollection<SearchField> ClearedFields { get; private set; } = [];
+
     public override IndexingResult PerformIndexingAsync(IndexingContext context)
     {
         // GetKeyTerm throws when the batch item omits the key field. It has to run inside
@@ -30,6 +41,7 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
         try
         {
             var fields = GetDocFields(context.Index);
+            ClearedFields = GetClearedFields(context.Index).ToList();
             IndexDocument(context, keyTerm, fields);
             return new IndexingResult(keyTerm.Text, true, 200);
         }
@@ -52,7 +64,41 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
             select indexField;
     }
 
+    /// <summary>
+    /// The fields the batch item named with an explicit JSON null, which a merge clears
+    /// (issue #71).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Azure documents setting a field to null on a merge as the way to remove its value, and
+    /// distinguishes that from omitting the field, which leaves the existing value alone.
+    /// <see cref="GetDocFields"/> cannot carry the distinction: a null produces no Lucene field,
+    /// so a merge driven only by that list has nothing to tell it which names to remove and
+    /// silently keeps the old value.
+    /// </para>
+    /// <para>
+    /// Only the field names are needed, so the value itself is never converted — which is what
+    /// makes this safe for types that would reject a null, such as a geography point or a
+    /// vector whose length must match <c>dimensions</c>.
+    /// </para>
+    /// </remarks>
+    protected IEnumerable<SearchField> GetClearedFields(SearchIndex index)
+    {
+        return from f in index.Fields
+            join v in Item on f.Name equals v.Key
+            where v.Value is null
+            select f;
+    }
+
     protected static void MergeDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields, bool uploadIfMissing)
+        => MergeDocument(context, keyTerm, docFields, [], uploadIfMissing);
+
+    protected static void MergeDocument(
+        IndexingContext context,
+        Term keyTerm,
+        IEnumerable<IIndexableField> docFields,
+        IEnumerable<SearchField> clearedFields,
+        bool uploadIfMissing)
     {
         var reader = context.Reader.Value;
         var searcher = new IndexSearcher(reader);
@@ -71,6 +117,15 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
         {
             doc.RemoveFields(name);
         }
+
+        // Runs after the replacements are removed and before they are added, so a field that is
+        // both cleared and supplied — which the JSON object cannot express, but a caller could
+        // reach through a complex field's sub-fields — keeps the supplied value.
+        foreach (var name in clearedFields.SelectMany(GetLuceneFieldNames))
+        {
+            doc.RemoveFields(name);
+        }
+
         foreach (var docField in materialized)
         {
             doc.Add(docField);
@@ -79,6 +134,52 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
         RestoreVectorDocValues(context.Index, doc);
 
         context.Writer.UpdateDocument(keyTerm, doc.Fields);
+    }
+
+    /// <summary>
+    /// Every Lucene field name a single index field can write, so that clearing it removes the
+    /// whole set rather than the retrievable copy alone (issue #71).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One index field routinely occupies several Lucene names: a searchable string that is also
+    /// filterable writes a second, unanalyzed copy under <c>__azs_raw__</c>; a facetable field
+    /// adds doc values; a geography point writes a latitude, a longitude and a doc-values entry;
+    /// a vector writes a stored sidecar and a packed copy. Removing only the field's own name
+    /// would leave those behind, and a document still carrying the raw copy of a cleared string
+    /// keeps matching filters for a value it no longer has.
+    /// </para>
+    /// <para>
+    /// The names are produced by asking each helper rather than by reconstructing the prefixes
+    /// here, so a convention added later is picked up by changing its own helper's call site
+    /// alone. Names are emitted unconditionally instead of being predicted from the field's
+    /// attributes: <see cref="Document.RemoveFields"/> ignores a name the document does not
+    /// carry, which makes over-listing free and under-listing the only real failure.
+    /// </para>
+    /// <para>
+    /// A complex field holds no value of its own, so clearing one means clearing every leaf
+    /// beneath it, plus the storage and doc-values entries the complex field itself writes.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> GetLuceneFieldNames(SearchField field)
+    {
+        if (field.IsComplex())
+        {
+            yield return ComplexTypeSupport.GetComplexStorageFieldName(field.Name);
+            yield return ComplexTypeSupport.GetComplexElementsDocValuesFieldName(field.Name);
+        }
+
+        foreach (var (path, _) in ComplexTypeSupport.EnumerateLeafFields(field))
+        {
+            yield return path;
+            yield return SearchFieldExtensions.GetRawStringFieldName(path);
+            yield return SearchFieldExtensions.GetCollectionStorageFieldName(path);
+            yield return FacetSupport.GetFacetDocValuesFieldName(path);
+            yield return GeoSupport.GetLatFieldName(path);
+            yield return GeoSupport.GetLonFieldName(path);
+            yield return GeoSupport.GetPointDocValuesFieldName(path);
+            yield return VectorSearchSupport.GetVectorDocValuesFieldName(path);
+        }
     }
 
     /// <summary>
