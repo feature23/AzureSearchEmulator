@@ -2,5 +2,5 @@
 
 public class EmulatorOptions
 {
-    public string IndexesDirectory { get; init; } = "";
+    public string IndexesDirectory { get; set; } = "";
 }

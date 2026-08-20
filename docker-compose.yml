@@ -8,9 +8,15 @@ services:
     environment:
       - ASPNETCORE_URLS=https://+;http://+
       - ASPNETCORE_HTTPS_PORT=5081
-      - ASPNETCORE_Kestrel__Certificates__Default__Password=password
-      - ASPNETCORE_Kestrel__Certificates__Default__Path=/app/aspnetapp.pfx
+      # The Azure Search SDK rejects http:// endpoints outright and validates TLS with no bypass
+      # hook, so the certificate has to be one the host already trusts. A certificate baked into
+      # the image can never be that, whatever its expiry date. The container therefore serves the
+      # machine's own ASP.NET Core development certificate, mounted from the host — the same one
+      # `dotnet dev-certs https --trust` installed. See the README for the one-time export.
+      - ASPNETCORE_Kestrel__Certificates__Default__Path=/https/aspnetapp.pfx
+      - ASPNETCORE_Kestrel__Certificates__Default__Password=${CERT_PASSWORD:-devcert}
     volumes:
       - indexes:/app/indexes
+      - ${CERT_PATH:-~/.aspnet/https}:/https:ro
 volumes:
   indexes:

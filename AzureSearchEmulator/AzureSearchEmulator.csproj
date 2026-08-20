@@ -8,7 +8,19 @@
 		<Version>1.0.0-beta</Version>
 		<WarningsAsErrors>Nullable</WarningsAsErrors>
 		<LangVersion>14</LangVersion>
-		<IsPackable>false</IsPackable>
+		<IsPackable>true</IsPackable>
+		<PackAsTool>true</PackAsTool>
+		<ToolCommandName>azsearchemu</ToolCommandName>
+		<PackageId>AzureSearchEmulator</PackageId>
+		<PackageLicenseExpression>AGPL-3.0-or-later</PackageLicenseExpression>
+		<RepositoryUrl>https://github.com/feature23/azuresearchemulator</RepositoryUrl>
+		<PackageTags>azure search emulator ai cognitive-search</PackageTags>
+		<Description>A local emulator for Azure AI Search, runnable as a .NET tool.</Description>
+		<Company>feature[23]</Company>
+		<Copyright>Copyright (c) feature[23] 2025</Copyright>
+		<Authors>Paul Irwin</Authors>
+		<PackageIcon>logo.png</PackageIcon>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -27,9 +39,8 @@
 	</ItemGroup>
 
 	<ItemGroup>
-	  <None Update="aspnetapp.pfx">
-	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	  </None>
+	  <None Include="../logo.png" Pack="true" PackagePath="\" />
+	  <None Include="README.md" Pack="true" PackagePath="\" />
 	</ItemGroup>
 
 </Project>
