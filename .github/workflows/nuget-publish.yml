@@ -25,7 +25,9 @@ jobs:
       with:
         dotnet-version: 10.0.x
     - name: Pack
-      run: dotnet pack AzureSearchEmulator.Aspire --configuration Release --output ./artifacts
+      run: |
+        dotnet pack AzureSearchEmulator --configuration Release --output ./artifacts
+        dotnet pack AzureSearchEmulator.Aspire --configuration Release --output ./artifacts
 
     # Request the API key immediately before pushing: each OIDC token is
     # single-use and the key it returns expires after one hour.
