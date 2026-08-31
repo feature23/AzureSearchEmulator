@@ -1,8 +1,12 @@
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Azure;
 using Azure.Core.Pipeline;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Indexes;
 using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
 using DotNet.Testcontainers.Containers;
 using Xunit;
 
@@ -16,7 +20,14 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
 {
     private readonly int _httpsPort = Random.Shared.Next(5000, 60000);
 
+    private const string CertPassword = "integration-tests";
+
     private IContainer? _container;
+
+    /// <summary>
+    /// Directory holding the throwaway TLS certificate mounted into the container.
+    /// </summary>
+    private string? _certDirectory;
 
     /// <summary>
     /// Gets the HTTPS endpoint URI for the running emulator container.
@@ -34,12 +45,15 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
             .WithCleanUp(true)
             .Build();
 
+        _certDirectory = CreateThrowawayCertificate();
+
         _container = new ContainerBuilder(image)
             .WithPortBinding(_httpsPort, _httpsPort)
             .WithEnvironment("ASPNETCORE_URLS", $"https://+:{_httpsPort}")
             .WithEnvironment("ASPNETCORE_HTTPS_PORT", _httpsPort.ToString())
-            .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Password", "password")
-            .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/app/aspnetapp.pfx")
+            .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Password", CertPassword)
+            .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/https/aspnetapp.pfx")
+            .WithBindMount(_certDirectory, "/https", AccessMode.ReadOnly)
             .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(_httpsPort)) // NOTE: we cannot use HTTP wait strategy due to self-signed cert
             .Build();
 
@@ -136,6 +150,43 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
     };
 
     /// <summary>
+    /// Generates a single-use self-signed certificate for the container to serve.
+    /// </summary>
+    /// <remarks>
+    /// The image ships no certificate of its own. The one it used to carry was removed because it
+    /// was untrusted by any host — which is what breaks the Azure SDK, whose clients validate TLS
+    /// and offer no bypass. These tests never depended on it being valid: they accept any
+    /// certificate, which is also why nobody noticed it had expired. Kestrel still needs something
+    /// to present on the HTTPS endpoint, so each run generates its own.
+    ///
+    /// A throwaway certificate is used rather than the machine's development certificate because
+    /// nothing here validates it — <see cref="CreateHandler"/> accepts any certificate — and
+    /// depending on <c>dotnet dev-certs</c> having been exported would make the suite fail on a
+    /// clean CI machine. Generating one keeps the tests self-contained.
+    /// </remarks>
+    private static string CreateThrowawayCertificate()
+    {
+        var directory = Directory.CreateTempSubdirectory("azsearchemu-tests-cert-").FullName;
+
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest("CN=localhost", rsa, HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+
+        var sanBuilder = new SubjectAlternativeNameBuilder();
+        sanBuilder.AddDnsName("localhost");
+        sanBuilder.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(sanBuilder.Build());
+
+        using var certificate = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(1));
+
+        File.WriteAllBytes(Path.Combine(directory, "aspnetapp.pfx"),
+            certificate.Export(X509ContentType.Pfx, CertPassword));
+
+        return directory;
+    }
+
+    /// <summary>
     /// Stops and disposes the emulator container.
     /// </summary>
     public async ValueTask DisposeAsync()
@@ -144,6 +195,11 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
         {
             await _container.StopAsync();
             await _container.DisposeAsync();
+        }
+
+        if (_certDirectory != null && Directory.Exists(_certDirectory))
+        {
+            Directory.Delete(_certDirectory, recursive: true);
         }
 
         GC.SuppressFinalize(this);

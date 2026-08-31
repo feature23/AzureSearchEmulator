@@ -16,9 +16,41 @@ using Microsoft.OData.ModelBuilder;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Default to plain HTTP on a fixed port (issue #67).
+//
+// Kestrel's own default binds 5000 and 5001, and 5001 is HTTPS — which needs a development
+// certificate the tool does not ship and cannot assume the user has trusted. As a `dotnet
+// tool` that produces a startup failure rather than a working emulator, so bind HTTP only.
+//
+// This is a default, not an override: it is only applied when the user has said nothing.
+// Docker and the Aspire integration both set ASPNETCORE_URLS explicitly and are unaffected,
+// as is `dotnet run`, whose launchSettings.json supplies applicationUrl.
+if (string.IsNullOrEmpty(builder.Configuration["urls"]))
+{
+    builder.WebHost.UseUrls("http://localhost:5123");
+}
+
 var model = GetEdmModel();
 
 builder.Services.Configure<EmulatorOptions>(builder.Configuration.GetSection("Emulator"));
+
+// Resolve IndexesDirectory to an absolute path up front (issue #67).
+//
+// The setting defaults to the relative path "indexes". Under `dotnet run` from the project
+// folder, and in the container where WORKDIR is /app, relative resolution lands somewhere
+// sensible. Installed as a `dotnet tool` it does not: the tool is launched from whatever
+// directory the user happens to be in, so a relative path would scatter index folders across
+// the filesystem and make an index created in one shell invisible from another.
+//
+// Anchoring to the current directory keeps that per-directory behaviour explicit and
+// documented rather than incidental, and leaves Docker unchanged — /app/indexes is what
+// "indexes" already resolved to there. An absolute value configured by the user passes
+// through Path.GetFullPath untouched.
+builder.Services.PostConfigure<EmulatorOptions>(options =>
+{
+    options.IndexesDirectory = Path.GetFullPath(
+        string.IsNullOrWhiteSpace(options.IndexesDirectory) ? "indexes" : options.IndexesDirectory);
+});
 
 const string CorsDefaultPolicyName = "AllowAllOrigins";
 

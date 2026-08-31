@@ -13,6 +13,65 @@ We're hiring remote engineers to contribute to cutting-edge AI and custom softwa
 
 ## Quick Start
 
+The emulator is published as a .NET tool. To install it globally:
+
+```bash
+dotnet tool install --global AzureSearchEmulator
+```
+
+Then run it from any directory:
+
+```bash
+azsearchemu
+```
+
+This listens on http://localhost:5123 and stores its data in an `indexes` folder in the
+directory you ran it from, so each project can keep its own set of indexes by running the tool
+from the project folder. To use a different port or location:
+
+```bash
+azsearchemu --urls http://localhost:8080 --Emulator:IndexesDirectory /path/to/indexes
+```
+
+### Connecting the Azure Search SDK
+
+The `Azure.Search.Documents` clients reject `http://` endpoints in their constructors:
+
+```
+System.ArgumentException: endpoint only supports https. (Parameter 'endpoint')
+```
+
+So to use the SDK against the emulator, run it over HTTPS:
+
+```bash
+azsearchemu --urls https://localhost:5123
+```
+
+This uses your machine's ASP.NET Core development certificate, which most .NET installs already
+have. If you have never trusted it, do so once:
+
+```bash
+dotnet dev-certs https --trust
+```
+
+The SDK then connects with no certificate workarounds:
+
+```csharp
+var endpoint = new Uri("https://localhost:5123");
+var client = new SearchIndexClient(endpoint, new AzureKeyCredential("any-key"));
+```
+
+To install into a single project instead of globally, use a
+[tool manifest](https://learn.microsoft.com/en-us/dotnet/core/tools/local-tools-how-to-use):
+
+```bash
+dotnet new tool-manifest
+dotnet tool install AzureSearchEmulator
+dotnet tool run azsearchemu
+```
+
+You can also run the emulator [with Docker](#building-and-running-with-docker), or from source:
+
 1. Clone the repo.
 2. Open AzureSearchEmulator.sln in Visual Studio 2026, Rider, or Visual Studio Code with C# Dev Kit and run it, 
 or cd to the `AzureSearchEmulator` folder and run `dotnet run` from the command-line.
@@ -619,6 +678,25 @@ Authentication is not yet implemented. If you're using the Azure Search SDK, you
 ## Building and Running with Docker
 
 It is not required to use Docker to run this project, see the Quick Start section above. 
+
+### One-time certificate setup
+
+The image ships no TLS certificate of its own. Because the Azure Search SDK requires HTTPS and
+validates the certificate, the container serves your machine's ASP.NET Core development
+certificate — the one your host already trusts — mounted in from the host.
+
+Export it once:
+
+```bash
+dotnet dev-certs https --trust
+dotnet dev-certs https -ep ~/.aspnet/https/aspnetapp.pfx -p devcert
+```
+
+`docker-compose.yml` mounts `~/.aspnet/https` and reads the password from `CERT_PASSWORD`,
+defaulting to `devcert`. Override either with `CERT_PATH` and `CERT_PASSWORD` if you keep your
+certificate elsewhere or use a different password.
+
+### Running with Docker Compose
 
 The easiest way to run with Docker is to use Docker Compose. Run the following from the repo root:
 

@@ -14,26 +14,26 @@ var search = builder.AddAzureSearchEmulator("search")
 
 You can leave off the `WithIndexesVolume()` if you want your search index data to be transient.
 
-## Disable HTTPS Certificate Validation
+## HTTPS certificates
 
-The emulator runs with a self-signed cert. 
-You will need to update your use of the Azure Search SDK to disable HTTPS certificate validation:
+The emulator serves HTTPS using your machine's ASP.NET Core development certificate, which Aspire
+provisions into the container. Most .NET installs already have one; if you have never trusted it,
+do so once:
 
-```csharp
-var options = new SearchClientOptions
-{
-    Transport = new HttpClientTransport(new HttpClientHandler
-    {
-        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
-    }),
-};
+```bash
+dotnet dev-certs https --trust
 ```
 
-Pass this `options` object as the last parameter to the constructor of `SearchClient`, `SearchIndexClient`, etc.:
+The Azure Search SDK then connects with no certificate workarounds — you do **not** need to pass a
+custom transport or set `ServerCertificateCustomValidationCallback`:
 
 ```csharp
-var client = new SearchClient(new Uri(searchServiceEndpoint), indexName, new DefaultAzureCredential(), options);
+var client = new SearchIndexClient(endpoint, new AzureKeyCredential("any-key"));
 ```
+
+Earlier versions of this package served a self-signed certificate baked into the emulator image and
+required disabling certificate validation. That is no longer necessary, and any such workaround can
+be removed.
 
 ## Contributing
 
