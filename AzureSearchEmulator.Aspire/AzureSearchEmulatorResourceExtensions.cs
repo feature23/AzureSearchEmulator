@@ -21,7 +21,8 @@ public static class AzureSearchEmulatorResourceExtensions
         /// <remarks>
         /// It is recommended to configure a volume for persisting index data using
         /// <see cref="WithIndexesVolume"/>.
-        /// You can also override the default image tag ("latest") by using the returned resource builder's
+        /// The image tag defaults to the emulator version matching this package's version. You can
+        /// override it by using the returned resource builder's
         /// <see cref="ContainerResourceBuilderExtensions.WithImageTag{T}"/> method.
         /// </remarks>
         public IResourceBuilder<AzureSearchEmulatorResource> AddAzureSearchEmulator(string name,
@@ -32,9 +33,9 @@ public static class AzureSearchEmulatorResourceExtensions
 
 #pragma warning disable ASPIRECERTIFICATES001 // WithHttpsDeveloperCertificate is experimental; see comment below.
             var resourceBuilder = builder.AddResource(resource)
-                .WithImage("feature23/azuresearchemulator")
-                .WithImageTag("latest")
-                .WithImageRegistry("ghcr.io")
+                .WithImage(AzureSearchEmulatorResource.ImageName)
+                .WithImageTag(AzureSearchEmulatorResource.ImageTag)
+                .WithImageRegistry(AzureSearchEmulatorResource.ImageRegistry)
                 .WithHttpEndpoint(port: httpPort, targetPort: AzureSearchEmulatorResource.DefaultHttpPort, env: "HTTP_PORTS")
                 .WithHttpsEndpoint(port: httpsPort, targetPort: AzureSearchEmulatorResource.DefaultHttpsPort, env: "HTTPS_PORTS")
                 .WithEnvironment("ASPNETCORE_URLS", $"https://+:{resource.GetEndpoint("https").Property(EndpointProperty.Port)};http://+:{resource.GetEndpoint("http").Property(EndpointProperty.Port)}")

@@ -106,6 +106,30 @@ public class AzureSearchEmulatorResourceExtensionsTests
         return await valueProvider.GetValueAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public void AddAzureSearchEmulator_PinsImageTagToPackageVersion()
+    {
+        // "latest" is an ordinary Docker tag, so a host that had already pulled it kept running the
+        // image from that first pull and never picked up the emulator a newer package expects.
+        // Pinning to the package version means upgrading the NuGet reference pulls a tag the host
+        // does not have yet.
+
+        // Arrange
+        var builder = DistributedApplication.CreateBuilder();
+
+        // Act
+        var resource = builder.AddAzureSearchEmulator("my-emulator").Resource;
+
+        // Assert
+        Assert.True(resource.TryGetAnnotationsOfType<ContainerImageAnnotation>(out var imageAnnotations));
+        var image = Assert.Single(imageAnnotations);
+
+        Assert.Equal("ghcr.io", image.Registry);
+        Assert.Equal("feature23/azuresearchemulator", image.Image);
+        Assert.Equal(AzureSearchEmulatorResource.ImageTag, image.Tag);
+        Assert.NotEqual("latest", image.Tag);
+    }
+
     [InlineData(false)]
     [InlineData(true)]
     [Theory]
