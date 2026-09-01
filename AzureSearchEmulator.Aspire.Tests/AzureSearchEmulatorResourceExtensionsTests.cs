@@ -84,6 +84,7 @@ public class AzureSearchEmulatorResourceExtensionsTests
                 EnvironmentVariables = environmentVariables,
                 CertificatePath = ReferenceExpression.Create($"/certs/cert.crt"),
                 KeyPath = ReferenceExpression.Create($"/certs/cert.key"),
+                CertificateWithKeyPath = ReferenceExpression.Create($"/certs/cert.pem"),
                 PfxPath = ReferenceExpression.Create($"/certs/cert.pfx"),
                 Password = null,
                 CancellationToken = TestContext.Current.CancellationToken,
