@@ -45,6 +45,66 @@ public class AzureSearchEmulatorResourceExtensionsTests
         Assert.Contains(executionConfiguration.EnvironmentVariables, kvp => kvp.Key == "ASPNETCORE_URLS");
     }
 
+    [Fact]
+    public async Task AddAzureSearchEmulator_ConfiguresKestrelCertificateForHttpsEndpoint()
+    {
+        // ASPNETCORE_URLS binds an HTTPS endpoint, so Kestrel has to be told which certificate to
+        // present. WithHttpsDeveloperCertificate only declares *which* certificate the resource
+        // should use -- Aspire provisions the files but applies no configuration of its own for a
+        // plain container, so it must be paired with a WithHttpsCertificateConfiguration callback
+        // that surfaces the paths. Without one the emulator fails to start with "No server
+        // certificate was specified" and every request fails the TLS handshake with an EOF.
+        //
+        // The callback is invoked directly rather than through ExecutionConfigurationBuilder:
+        // resolving a built configuration also resolves ASPNETCORE_URLS, whose endpoint bindings
+        // never resolve without a live app host.
+
+        // Arrange
+        var builder = DistributedApplication.CreateBuilder();
+        var resource = builder.AddAzureSearchEmulator("my-emulator").Resource;
+
+#pragma warning disable ASPIRECERTIFICATES001 // Matches the suppression on the call site under test.
+        Assert.True(resource.TryGetAnnotationsOfType<HttpsCertificateAnnotation>(out var certificateAnnotations),
+            "The resource does not request a certificate for its HTTPS endpoint.");
+        Assert.Contains(certificateAnnotations, a => a.UseDeveloperCertificate == true);
+
+        Assert.True(resource.TryGetAnnotationsOfType<HttpsCertificateConfigurationCallbackAnnotation>(out var callbacks),
+            "The resource requests a certificate but never configures how to use it; Kestrel will fail to bind the HTTPS endpoint.");
+
+        var environmentVariables = new Dictionary<string, object>();
+
+        // Act
+        foreach (var callback in callbacks)
+        {
+            await callback.Callback(new HttpsCertificateConfigurationCallbackAnnotationContext
+            {
+                ExecutionContext = new DistributedApplicationExecutionContext(DistributedApplicationOperation.Run),
+                Resource = resource,
+                Arguments = [],
+                EnvironmentVariables = environmentVariables,
+                CertificatePath = ReferenceExpression.Create($"/certs/cert.crt"),
+                KeyPath = ReferenceExpression.Create($"/certs/cert.key"),
+                PfxPath = ReferenceExpression.Create($"/certs/cert.pfx"),
+                Password = null,
+                CancellationToken = TestContext.Current.CancellationToken,
+            });
+        }
+#pragma warning restore ASPIRECERTIFICATES001
+
+        // Assert
+        Assert.Equal("/certs/cert.crt",
+            await ResolveAsync(Assert.Contains("Kestrel__Certificates__Default__Path", environmentVariables)));
+        Assert.Equal("/certs/cert.key",
+            await ResolveAsync(Assert.Contains("Kestrel__Certificates__Default__KeyPath", environmentVariables)));
+    }
+
+    private static async Task<string?> ResolveAsync(object value)
+    {
+        var valueProvider = Assert.IsAssignableFrom<IValueProvider>(value);
+
+        return await valueProvider.GetValueAsync(TestContext.Current.CancellationToken);
+    }
+
     [InlineData(false)]
     [InlineData(true)]
     [Theory]
