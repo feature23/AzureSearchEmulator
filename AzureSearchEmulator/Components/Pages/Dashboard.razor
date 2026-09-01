@@ -1,0 +1,197 @@
+@page "/"
+@rendermode InteractiveServer
+@inject EmulatorStatusService StatusService
+@implements IDisposable
+
+<PageTitle>Azure Search Emulator</PageTitle>
+
+<h1 class="visually-hidden">Azure Search Emulator status</h1>
+
+@if (_status is null)
+{
+    <section class="panel panel-loading" aria-busy="true">
+        <span class="spinner" aria-hidden="true"></span>
+        <p class="muted">Checking emulator health…</p>
+    </section>
+}
+else
+{
+    <section class="hero @StatusClass(_status.Status)">
+        <div class="hero-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <div>
+                <p class="hero-eyebrow">Emulator status</p>
+                <p class="hero-headline">@StatusHeadline(_status.Status)</p>
+            </div>
+        </div>
+        <dl class="hero-facts">
+            <div>
+                <dt>Version</dt>
+                <dd>@_status.Version</dd>
+            </div>
+            <div>
+                <dt>Environment</dt>
+                <dd>@_status.Environment</dd>
+            </div>
+            <div>
+                <dt>Uptime</dt>
+                <dd>@FormatUptime(_status.Uptime)</dd>
+            </div>
+            <div>
+                <dt>Checks took</dt>
+                <dd>@FormatDuration(_status.TotalDuration)</dd>
+            </div>
+        </dl>
+    </section>
+
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Health checks</h2>
+            <button class="button" type="button" @onclick="RefreshAsync" disabled="@_refreshing">
+                @(_refreshing ? "Refreshing…" : "Refresh")
+            </button>
+        </div>
+
+        <ul class="checks">
+            @foreach (var entry in _status.Entries)
+            {
+                <li class="check @StatusClass(entry.Status)">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <div class="check-body">
+                        <p class="check-name">@Humanize(entry.Name)</p>
+                        @if (!string.IsNullOrWhiteSpace(entry.Description))
+                        {
+                            <p class="check-description">@entry.Description</p>
+                        }
+                    </div>
+                    <span class="badge">@entry.Status</span>
+                </li>
+            }
+        </ul>
+    </section>
+
+    <section class="panel">
+        <h2>Storage</h2>
+        <p class="muted">Index definitions and their Lucene data are written here.</p>
+        <p class="path" title="@_status.IndexesDirectory">@_status.IndexesDirectory</p>
+    </section>
+
+    <p class="timestamp">
+        Last checked @_status.CheckedAt.ToLocalTime().ToString("HH:mm:ss") &middot; refreshes
+        automatically every @RefreshInterval.TotalSeconds seconds.
+    </p>
+}
+
+@code {
+    // Long enough that an idle dashboard is not re-probing storage every second, short enough
+    // that a mount going read-only shows up while the user is still looking at the page.
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(15);
+
+    private EmulatorStatus? _status;
+    private bool _refreshing;
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync(CancellationToken.None);
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // Started after the first render rather than in OnInitializedAsync, which also runs during
+        // the prerender pass — a timer started there would tick against a circuit that no longer
+        // exists once the interactive one takes over.
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _cts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(RefreshInterval);
+        _ = PollAsync(_cts.Token);
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (await _timer!.WaitForNextTickAsync(cancellationToken))
+            {
+                await LoadAsync(cancellationToken);
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        {
+            // The page went away mid-tick: Dispose cancels the token and disposes the timer, and
+            // either can surface here depending on where the loop happened to be. Neither is a
+            // fault worth tearing down the circuit over.
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        _refreshing = true;
+
+        try
+        {
+            await LoadAsync(_cts?.Token ?? CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        {
+            // Navigated away while the checks were still running.
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private async Task LoadAsync(CancellationToken cancellationToken)
+    {
+        _status = await StatusService.GetStatusAsync(cancellationToken);
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _timer?.Dispose();
+    }
+
+    private static string StatusClass(HealthStatus status) => status switch
+    {
+        HealthStatus.Healthy => "is-healthy",
+        HealthStatus.Degraded => "is-degraded",
+        _ => "is-unhealthy"
+    };
+
+    private static string StatusHeadline(HealthStatus status) => status switch
+    {
+        HealthStatus.Healthy => "Running normally",
+        HealthStatus.Degraded => "Running with problems",
+        _ => "Not serving requests correctly"
+    };
+
+    private static string FormatDuration(TimeSpan duration) =>
+        duration.TotalMilliseconds < 1000
+            ? $"{duration.TotalMilliseconds:0} ms"
+            : $"{duration.TotalSeconds:0.0} s";
+
+    private static string FormatUptime(TimeSpan uptime) => uptime switch
+    {
+        { TotalMinutes: < 1 } => $"{uptime.TotalSeconds:0} sec",
+        { TotalHours: < 1 } => $"{uptime.TotalMinutes:0} min",
+        { TotalDays: < 1 } => $"{uptime.Hours}h {uptime.Minutes}m",
+        _ => $"{(int)uptime.TotalDays}d {uptime.Hours}h"
+    };
+
+    /// Health check names are registered as identifiers; the dashboard shows prose.
+    private static string Humanize(string name) => name switch
+    {
+        "index-storage" => "Index storage",
+        "index-definitions" => "Index definitions",
+        _ => name
+    };
+}

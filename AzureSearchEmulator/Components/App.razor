@@ -1,0 +1,21 @@
+@* Root component (issue #90). Hand-written rather than taken from the Blazor template: the
+   template's version pulls in bootstrap, the sample stylesheet and the blazor error UI, none of
+   which this dashboard uses. *@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="icon" href="data:," />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes />
+    <script src="_framework/blazor.web.js"></script>
+</body>
+
+</html>
