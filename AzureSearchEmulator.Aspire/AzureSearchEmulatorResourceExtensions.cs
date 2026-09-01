@@ -54,7 +54,20 @@ public static class AzureSearchEmulatorResourceExtensions
                 // The API is still marked experimental by Aspire, so the diagnostic is suppressed
                 // narrowly here rather than project-wide: if a future Aspire release changes or
                 // removes it, this is the one call site to revisit.
-                .WithHttpsDeveloperCertificate();
+                .WithHttpsDeveloperCertificate()
+                // WithHttpsDeveloperCertificate only declares which certificate the resource should
+                // use; it provisions the files into the container but does not tell the process
+                // inside how to find them. Aspire applies no default for a plain container, so
+                // without this callback Kestrel is told by ASPNETCORE_URLS to bind HTTPS, finds no
+                // certificate, and the host fails to start with "No server certificate was
+                // specified" -- every request then fails the TLS handshake with an EOF.
+                .WithHttpsCertificateConfiguration(ctx =>
+                {
+                    ctx.EnvironmentVariables["Kestrel__Certificates__Default__Path"] = ctx.CertificatePath;
+                    ctx.EnvironmentVariables["Kestrel__Certificates__Default__KeyPath"] = ctx.KeyPath;
+
+                    return Task.CompletedTask;
+                });
 #pragma warning restore ASPIRECERTIFICATES001
 
             return resourceBuilder;
