@@ -1097,10 +1097,30 @@ public class LuceneNetIndexSearcher(
         }
     }
 
+    /// <summary>
+    /// Stands in for the index directory of an index that has never had a document written: the
+    /// directory is created on first write, so until then there is nothing to open, and Azure
+    /// answers such an index with an empty result rather than an error.
+    /// </summary>
+    private static readonly Lazy<IndexReader> EmptyReader = new(() =>
+    {
+        var directory = new Lucene.Net.Store.RAMDirectory();
+        var config = new IndexWriterConfig(Lucene.Net.Util.LuceneVersion.LUCENE_48, new Lucene.Net.Analysis.Core.KeywordAnalyzer());
+
+        new IndexWriter(directory, config).Dispose();
+
+        return DirectoryReader.Open(directory);
+    });
+
     private IndexSearcher GetSearcher(SearchIndex index)
     {
-        var reader = indexReaderFactory.GetIndexReader(index.Name);
-
-        return new IndexSearcher(reader);
+        try
+        {
+            return new IndexSearcher(indexReaderFactory.GetIndexReader(index.Name));
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return new IndexSearcher(EmptyReader.Value);
+        }
     }
 }
