@@ -162,6 +162,8 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   custom `normalizers` defined on the index (see Normalizers below)
 * Synonym maps: service-level `synonymmaps` in Solr format, named by a field's `synonymMaps`
   to widen queries at search time (see Synonym maps below)
+* Index aliases: service-level `aliases` that document routes resolve to one index
+  (see Aliases below)
 * Vector search: `Collection(Edm.Single)` fields with `vectorSearch` profiles and algorithms,
   `vectorQueries` with all three metrics and both filter modes, and hybrid search fusing text
   and vector rankings with Reciprocal Rank Fusion (see Vector fields below)
@@ -488,6 +490,25 @@ Synonym maps apply to `searchable` `Edm.String` and `Collection(Edm.String)` fie
 that names a map it cannot use — one that is not searchable, or holds no text — is rejected when
 the index is created, as is a field naming a map the service does not have. Only the `solr`
 format is supported, which is the only one Azure Search itself supports.
+
+### Aliases
+
+An alias is a stable name for one index, so an index can be rebuilt and swapped without clients
+changing the name they use:
+
+```http
+PUT /aliases('live')?api-version=2025-11-01-preview
+Content-Type: application/json
+
+{ "name": "live", "indexes": ["products-v2"] }
+```
+
+`GET /aliases`, and `GET`, `PUT` and `DELETE` on `/aliases('live')`, behave as the service's do.
+An alias must target exactly one existing index and may not share a name with an index. Search,
+get, count, suggest, autocomplete and document indexing accept the alias wherever they accept an
+index name; the `/indexes` routes do not. Re-pointing an alias is a `PUT` with a new target. An
+alias whose index was deleted answers `404` until it is re-pointed. Aliases are counted in
+`aliasesCount` of `/servicestats`. See `docs/specs/aliases.md`.
 
 ### Filter semantics
 
