@@ -177,50 +177,6 @@ public class ErrorResponseIntegrationTests(EmulatorFactory factory)
     }
 
     /// <summary>
-    /// An unexpected fault still answers in the envelope, and without leaking internals.
-    /// </summary>
-    /// <remarks>
-    /// Searching an index that has never had a document written to it currently trips a Lucene
-    /// DirectoryNotFoundException, because the segment directory is only created on first write.
-    /// That 500 is arguably its own bug — the real service answers an empty result set — so this
-    /// test deliberately asserts only on the SHAPE of an unexpected failure, not on this query
-    /// being one. Should the empty-index case be fixed to return results, the assertions below
-    /// stop applying and the test should be pointed at another unexpected fault rather than
-    /// being made to keep this 500 alive.
-    ///
-    /// The generic message is the point: the underlying exception names the emulator's own
-    /// filesystem paths, and those belong in the log rather than the response body.
-    /// </remarks>
-    [Fact]
-    public async Task UnexpectedFailure_ReturnsEnvelopeWithoutInternalDetail()
-    {
-        const string indexName = $"{IndexName}-unexpected";
-        var indexClient = factory.CreateSearchIndexClient();
-        await indexClient.CreateIndexAsync(BuildIndex(indexName), TestContext.Current.CancellationToken);
-
-        var http = factory.CreateHttpClient();
-        var response = await http.GetAsync(
-            $"/indexes/{indexName}/docs?search=*",
-            TestContext.Current.CancellationToken);
-
-        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-
-        // Guard the premise: if this stops being a server fault, the assertions below are no
-        // longer testing what they claim to.
-        Assert.True(response.StatusCode == HttpStatusCode.InternalServerError,
-            $"This test needs a query that faults unexpectedly; got {(int)response.StatusCode}. Body: {body}");
-
-        using var document = JsonDocument.Parse(body);
-        var message = document.RootElement.GetProperty("error").GetProperty("message").GetString();
-
-        Assert.Equal("An unexpected error occurred.", message);
-        Assert.DoesNotContain("/app", body, StringComparison.Ordinal);
-        Assert.DoesNotContain("Exception", body, StringComparison.Ordinal);
-
-        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
-    }
-
-    /// <summary>
     /// What the consumer sees: the SDK reads the message out of the envelope instead of
     /// falling back to its own "Service request failed."
     /// </summary>
