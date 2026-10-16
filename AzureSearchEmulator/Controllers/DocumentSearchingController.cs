@@ -127,6 +127,13 @@ public class DocumentSearchingController(
             ModelState.AddModelError(nameof(request.Skip), "Skip must be between 0 and 100,000");
         }
 
+        // Semantic ranking needs a Microsoft-hosted reranker that cannot be emulated. Refusing is
+        // better than quietly returning lexical results a caller would take for reranked ones.
+        if (string.Equals(request.QueryType, "semantic", StringComparison.OrdinalIgnoreCase))
+        {
+            ModelState.AddModelError(nameof(request.QueryType), "queryType 'semantic' is not supported by the emulator.");
+        }
+
         if (!ModelState.IsValid)
         {
             return BadRequest(ModelState);
