@@ -41,7 +41,17 @@ public class SearchRequest
 
     public int Skip { get; set; } = 0;
 
-    public int Top { get; set; } = 50;
+    public const int DefaultTop = 50;
+
+    /// <summary>
+    /// The page size the caller asked for, or null when it did not ask.
+    /// </summary>
+    /// <remarks>
+    /// Null is kept apart from <see cref="DefaultTop"/> because Azure treats them differently:
+    /// only a request without <c>top</c> gets <c>@search.nextPageParameters</c> when more results
+    /// match.
+    /// </remarks>
+    public int? Top { get; set; }
 
     /// <summary>
     /// Vector queries to run against the index's vector fields (issue #46).

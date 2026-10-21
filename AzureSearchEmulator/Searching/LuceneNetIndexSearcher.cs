@@ -126,7 +126,7 @@ public class LuceneNetIndexSearcher(
 
         var selection = FieldSelection.Parse(index, request.Select);
 
-        var hitsWanted = request.Skip + request.Top;
+        var hitsWanted = request.Skip + (request.Top ?? SearchRequest.DefaultTop);
 
         var response = new SearchResponse { Coverage = SearchCoverage.GetCoverage(request) };
 
@@ -175,6 +175,13 @@ public class LuceneNetIndexSearcher(
         if (request.Count)
         {
             response.Count = docs.TotalHits;
+        }
+
+        // Azure offers a next page only when the request left out top. A caller that set top
+        // gets what it asked for and pages with skip itself.
+        if (request.Top == null && docs.TotalHits > hitsWanted)
+        {
+            response.NextPageSkip = hitsWanted;
         }
 
         if (facets != null)

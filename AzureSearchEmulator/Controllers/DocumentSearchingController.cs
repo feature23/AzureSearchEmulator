@@ -1,4 +1,6 @@
-﻿using System.Text.Json.Nodes;
+﻿using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Mvc;
@@ -11,6 +13,11 @@ public class DocumentSearchingController(
     ISearchIndexRepository searchIndexRepository)
     : ODataController
 {
+    private static readonly JsonSerializerOptions NextPageJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     [HttpGet]
     [Route("indexes/{indexKey}/docs/$count")]
     [Route("indexes({indexKey})/docs/$count")]
@@ -171,6 +178,19 @@ public class DocumentSearchingController(
         }
 
         oDataResponse["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray());
+
+        // Only on POST, as in Azure: a GET gets a nextLink to another GET, which is not built here.
+        if (response.NextPageSkip is { } nextPageSkip && HttpMethods.IsPost(Request.Method))
+        {
+            // The same request with skip moved on. Top stays absent, so the next page gets a
+            // continuation of its own.
+            var nextPage = JsonSerializer.SerializeToNode(request, NextPageJsonOptions)!.AsObject();
+            nextPage["skip"] = nextPageSkip;
+
+            oDataResponse["@search.nextPageParameters"] = nextPage;
+            oDataResponse["@odata.nextLink"] =
+                $"{Request.Scheme}://{Request.Host}{Request.PathBase}/indexes('{indexKey}')/docs/search.post.search{Request.QueryString}";
+        }
 
         return Ok(oDataResponse);
     }
