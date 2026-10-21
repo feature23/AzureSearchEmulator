@@ -56,8 +56,9 @@ public static class SearchFieldExtensions
     /// Reads the field's value back from a document's stored fields, or null when it has none.
     /// </summary>
     /// <remarks>
-    /// Does not check <see cref="SearchField.Retrievable"/>, and a complex value comes back whole,
-    /// including sub-fields that are not retrievable: the caller decides what to return.
+    /// Does not check <see cref="SearchField.Retrievable"/>: a merge rebuilds the document from
+    /// whatever is stored, and a vector's stored copy is written even when it is not retrievable.
+    /// A complex value comes back whole, including sub-fields that are not retrievable.
     /// </remarks>
     public static JsonNode? GetStoredValue(this SearchField field, Document doc)
     {

@@ -106,8 +106,7 @@ public class MergeNullClearsFieldTests : IDisposable
 
     /// <summary>
     /// A cleared string must also lose the unanalyzed <c>__azs_raw__</c> copy that filtering
-    /// reads, or the document keeps matching a filter for a value it no longer has — the
-    /// failure that motivated clearing every name a field writes rather than just its own.
+    /// reads, or the document keeps matching a filter for a value it no longer has.
     /// </summary>
     [Fact]
     public async Task Merge_WithExplicitNull_AlsoClearsTheFilterableCopy()
