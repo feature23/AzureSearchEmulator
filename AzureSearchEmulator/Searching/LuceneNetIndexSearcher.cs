@@ -48,17 +48,9 @@ public class LuceneNetIndexSearcher(
 
     public Task<int> GetDocCount(SearchIndex index)
     {
-        try
-        {
-            var reader = indexReaderFactory.GetIndexReader(index.Name);
+        var reader = indexReaderFactory.GetIndexReader(index.Name);
 
-            return Task.FromResult(reader.NumDocs);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            // If we've come this far, the index exists, but has no documents, so it's okay to return 0
-            return Task.FromResult(0);
-        }
+        return Task.FromResult(reader.NumDocs);
     }
 
     public async Task<SearchResponse> Search(SearchIndex index, SearchRequest request)

@@ -25,6 +25,13 @@ public class LuceneDirectoryReaderFactory(ILuceneDirectoryFactory luceneDirector
     {
         var directory = luceneDirectoryFactory.GetDirectory(indexName);
 
+        // An index with no documents written yet has no Lucene files, and may not have a
+        // folder. It is not cached, so the next call looks again and sees the first write.
+        if (!DirectoryReader.IndexExists(directory))
+        {
+            return new MultiReader();
+        }
+
         var reader = DirectoryReader.Open(directory);
 
         _indexReaders[indexName] = reader;
