@@ -115,6 +115,29 @@ public class SearchPagingTests : IDisposable
         Assert.Null(response.NextPageSkip);
     }
 
+    /// <summary>
+    /// A next page whose skip would pass <see cref="SearchRequest.MaxSkip"/> would be refused when
+    /// sent back, so none is offered once the limit is reached.
+    /// </summary>
+    [Theory]
+    [InlineData(SearchRequest.MaxSkip - 50, SearchRequest.MaxSkip)]
+    [InlineData(SearchRequest.MaxSkip - 40, null)]
+    public async Task WithoutTop_NearTheSkipLimit_OffersANextPageOnlyWithinIt(int skip, int? expectedNextPageSkip)
+    {
+        using var directory = new RAMDirectory();
+        var factory = new SharedDirectoryFactory(directory);
+        using var writerFactory = new LuceneNetIndexWriterFactory(factory);
+
+        new LuceneNetSearchIndexer(writerFactory, factory).IndexDocuments(_index, Enumerable.Range(0, SearchRequest.MaxSkip + 100)
+            .Select(i => (IndexDocumentAction)new UploadIndexDocumentAction(new JsonObject { ["Id"] = i.ToString("D6") }))
+            .ToList());
+
+        var response = await new LuceneNetIndexSearcher(factory).Search(_index, new SearchRequest { Skip = skip });
+
+        Assert.Equal(SearchRequest.DefaultTop, response.Results.Count);
+        Assert.Equal(expectedNextPageSkip, response.NextPageSkip);
+    }
+
     private class SharedDirectoryFactory(Lucene.Net.Store.Directory directory) : ILuceneDirectoryFactory, ILuceneIndexReaderFactory
     {
         public Lucene.Net.Store.Directory GetDirectory(string indexName) => directory;

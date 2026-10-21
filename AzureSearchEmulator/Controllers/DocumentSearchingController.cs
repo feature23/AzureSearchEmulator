@@ -129,7 +129,7 @@ public class DocumentSearchingController(
             ModelState.AddModelError(nameof(request.Top), "Page size must be between 0 and 1000");
         }
 
-        if (request.Skip is > 100_000 or < 0)
+        if (request.Skip is > SearchRequest.MaxSkip or < 0)
         {
             ModelState.AddModelError(nameof(request.Skip), "Skip must be between 0 and 100,000");
         }

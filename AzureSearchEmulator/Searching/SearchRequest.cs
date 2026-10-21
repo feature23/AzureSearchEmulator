@@ -43,6 +43,8 @@ public class SearchRequest
 
     public const int DefaultTop = 50;
 
+    public const int MaxSkip = 100_000;
+
     /// <summary>
     /// The page size the caller asked for, or null when it did not ask.
     /// </summary>

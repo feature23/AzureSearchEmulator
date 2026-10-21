@@ -178,8 +178,9 @@ public class LuceneNetIndexSearcher(
         }
 
         // Azure offers a next page only when the request left out top. A caller that set top
-        // gets what it asked for and pages with skip itself.
-        if (request.Top == null && docs.TotalHits > hitsWanted)
+        // gets what it asked for and pages with skip itself. A next page past the skip limit
+        // would be refused, so none is offered.
+        if (request.Top == null && docs.TotalHits > hitsWanted && hitsWanted <= SearchRequest.MaxSkip)
         {
             response.NextPageSkip = hitsWanted;
         }
