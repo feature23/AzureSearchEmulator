@@ -22,7 +22,7 @@ public class DeleteIndexDocumentAction(JsonObject item) : IndexDocumentAction(it
 
         try
         {
-            context.Writer.DeleteDocuments(keyTerm);
+            context.DeleteDocuments(keyTerm);
             return new IndexingResult(keyTerm.Text, true, 200);
         }
         catch (Exception ex)
