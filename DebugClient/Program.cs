@@ -242,8 +242,46 @@ try
         Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
     }
 
-    // Test 10: Delete Index
-    Console.WriteLine("10. Deleting index...");
+    // Test 10: Search an index that has no documents
+    Console.WriteLine("10. Searching an empty index...");
+    const string emptyIndexName = "empty-test-index";
+    try
+    {
+        await indexClient.CreateIndexAsync(new SearchIndex(emptyIndexName)
+        {
+            Fields =
+            [
+                new SearchField("id", SearchFieldDataType.String) { IsKey = true },
+                new SearchField("name", SearchFieldDataType.String) { IsSearchable = true }
+            ]
+        });
+
+        var emptySearchClient = new SearchClient(new Uri(endpoint), emptyIndexName, credential, options);
+
+        // Azure answers a search on an index with no documents with an empty result, not an error.
+        var results = await emptySearchClient.SearchAsync<object>("*", new SearchOptions { IncludeTotalCount = true });
+        var items = await results.Value.GetResultsAsync().ToListAsync();
+
+        Console.WriteLine($"   ✓ Found {items.Count} results, total count {results.Value.TotalCount}\n");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
+    }
+    finally
+    {
+        try
+        {
+            await indexClient.DeleteIndexAsync(emptyIndexName);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   ✗ Error deleting {emptyIndexName}: {ex.GetType().Name}: {ex.Message}\n");
+        }
+    }
+
+    // Test 11: Delete Index
+    Console.WriteLine("11. Deleting index...");
     try
     {
         await indexClient.DeleteIndexAsync(indexName);
