@@ -959,65 +959,16 @@ public class LuceneNetIndexSearcher(
                 continue;
             }
 
-            if (field.IsComplex())
+            var value = field.GetStoredValue(doc);
+
+            if (value == null)
             {
-                // Complex values round-trip through the stored JSON sidecar rather than the
-                // flattened leaves, which cannot say which values belonged to which element
-                // of a Collection(Edm.ComplexType).
-                var storedComplexJson = doc.Get(ComplexTypeSupport.GetComplexStorageFieldName(field.Name));
-                if (storedComplexJson != null)
-                {
-                    result[field.Name] = FilterToRetrievableSubFields(
-                        field,
-                        JsonNode.Parse(storedComplexJson),
-                        selection?.GetSubSelection(field.Name));
-                }
                 continue;
             }
 
-            if (field.IsCollection())
-            {
-                var storedJson = doc.Get(SearchFieldExtensions.GetCollectionStorageFieldName(field.Name));
-                if (storedJson != null)
-                {
-                    result[field.Name] = JsonNode.Parse(storedJson);
-                }
-                continue;
-            }
-
-            if (field.Type == GeoSupport.GeographyPointType)
-            {
-                // Points are stored as a separate lat/lon pair rather than under the
-                // field's own name, so they need their own lookup.
-                var latField = doc.GetField(GeoSupport.GetLatFieldName(field.Name));
-                var lonField = doc.GetField(GeoSupport.GetLonFieldName(field.Name));
-
-                if (latField?.GetDoubleValue() is double storedLat
-                    && lonField?.GetDoubleValue() is double storedLon)
-                {
-                    result[field.Name] = GeoSupport.CreateGeoJsonPoint(storedLon, storedLat);
-                }
-
-                continue;
-            }
-
-            var docField = doc.GetField(field.Name);
-
-            if (docField != null)
-            {
-                result[field.Name] = field.Type switch
-                {
-                    "Edm.String" => docField.GetStringValue(),
-                    "Edm.Int32" => docField.GetInt32Value(),
-                    "Edm.Int64" => docField.GetInt64Value(),
-                    "Edm.Double" => docField.GetDoubleValue(),
-                    "Edm.Boolean" => docField.GetInt32Value() is int i ? i != 0 : null,
-                    "Edm.DateTimeOffset" => docField.GetInt64Value() is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null,
-                    // Edm.GeographyPoint is handled above, before this switch.
-                    "Edm.ComplexType" => throw new NotImplementedException(),
-                    _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
-                };
-            }
+            result[field.Name] = field.IsComplex()
+                ? FilterToRetrievableSubFields(field, value, selection?.GetSubSelection(field.Name))
+                : value;
         }
 
         return result;

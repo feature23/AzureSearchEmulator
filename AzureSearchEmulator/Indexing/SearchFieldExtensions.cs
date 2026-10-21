@@ -52,6 +52,61 @@ public static class SearchFieldExtensions
         return CreateSingleValueFields(field, value, path, index);
     }
 
+    /// <summary>
+    /// Reads the field's value back from a document's stored fields, or null when it has none.
+    /// </summary>
+    /// <remarks>
+    /// Does not check <see cref="SearchField.Retrievable"/>, and a complex value comes back whole,
+    /// including sub-fields that are not retrievable: the caller decides what to return.
+    /// </remarks>
+    public static JsonNode? GetStoredValue(this SearchField field, Document doc)
+    {
+        if (field.IsComplex())
+        {
+            // Read from the stored JSON copy rather than the flattened leaves, which cannot say
+            // which values belonged to which element of a Collection(Edm.ComplexType).
+            var storedComplexJson = doc.Get(ComplexTypeSupport.GetComplexStorageFieldName(field.Name));
+            return storedComplexJson == null ? null : JsonNode.Parse(storedComplexJson);
+        }
+
+        if (field.IsCollection())
+        {
+            var storedJson = doc.Get(GetCollectionStorageFieldName(field.Name));
+            return storedJson == null ? null : JsonNode.Parse(storedJson);
+        }
+
+        if (field.Type == GeoSupport.GeographyPointType)
+        {
+            // Points are stored as a separate lat/lon pair rather than under the
+            // field's own name, so they need their own lookup.
+            var latField = doc.GetField(GeoSupport.GetLatFieldName(field.Name));
+            var lonField = doc.GetField(GeoSupport.GetLonFieldName(field.Name));
+
+            return latField?.GetDoubleValue() is double storedLat
+                && lonField?.GetDoubleValue() is double storedLon
+                    ? GeoSupport.CreateGeoJsonPoint(storedLon, storedLat)
+                    : null;
+        }
+
+        var docField = doc.GetField(field.Name);
+
+        if (docField == null)
+        {
+            return null;
+        }
+
+        return field.Type switch
+        {
+            "Edm.String" => docField.GetStringValue(),
+            "Edm.Int32" => docField.GetInt32Value(),
+            "Edm.Int64" => docField.GetInt64Value(),
+            "Edm.Double" => docField.GetDoubleValue(),
+            "Edm.Boolean" => docField.GetInt32Value() is int i ? i != 0 : null,
+            "Edm.DateTimeOffset" => docField.GetInt64Value() is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null,
+            _ => throw new InvalidOperationException($"Unsupported field type {field.Type}")
+        };
+    }
+
     private static IEnumerable<IIndexableField> CreateSingleValueFields(
         SearchField field,
         JsonNode value,
