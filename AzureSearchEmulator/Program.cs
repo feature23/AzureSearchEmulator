@@ -1,9 +1,12 @@
 using System.Text.Json;
 using AzureSearchEmulator;
+using AzureSearchEmulator.Components;
 using AzureSearchEmulator.ErrorHandling;
+using AzureSearchEmulator.Health;
 using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
+using AzureSearchEmulator.Routing;
 using AzureSearchEmulator.SearchData;
 using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Http.Extensions;
@@ -71,6 +74,10 @@ builder.Services.AddControllers(options =>
         // as a filter rather than applied at each call site so every existing rejection —
         // and any added later — carries the shape the SDK reads (issue #40).
         options.Filters.Add<SearchErrorResultFilter>();
+
+        // Frees "/" for the dashboard; see the convention for why the service document is the
+        // endpoint that gives way (issue #90).
+        options.Conventions.Add(new ODataServiceDocumentConvention());
     })
     .AddJsonOptions(options =>
     {
@@ -129,6 +136,23 @@ builder.Services.AddSingleton<ILuceneIndexReaderFactory, LuceneDirectoryReaderFa
 builder.Services.AddSingleton<ILuceneIndexWriterFactory, LuceneNetIndexWriterFactory>();
 builder.Services.AddTransient<IIndexSearcher, LuceneNetIndexSearcher>();
 builder.Services.AddSingleton<ISearchIndexer, LuceneNetSearchIndexer>();
+
+// Health checks, surfaced both at /health for a monitor and on the dashboard for a human
+// (issue #90). The names are the identifiers the dashboard maps to prose.
+builder.Services.AddHealthChecks()
+    .AddCheck<IndexStorageHealthCheck>("index-storage")
+    .AddCheck<IndexDefinitionsHealthCheck>("index-definitions");
+
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddScoped<EmulatorStatusService>();
+
+// The dashboard (issue #90). Blazor rather than a separate SPA so the whole UI ships inside the
+// same assembly as the emulator — no second build step, no static bundle to keep in sync, and
+// nothing extra for `dotnet tool install` to pull down. The interactive server render mode means
+// the status panel refreshes over the existing circuit instead of the page needing to know its
+// own externally reachable URL to poll itself.
+builder.Services.AddRazorComponents()
+    .AddInteractiveServerComponents();
 
 var app = builder.Build();
 
@@ -194,7 +218,27 @@ app.UseODataBatching();
 
 app.UseRouting();
 
+// Serves wwwroot, which holds the dashboard's stylesheet and nothing else. Registered after
+// UseRouting so these requests still pass through the request logging above rather than being
+// short-circuited ahead of it.
+app.UseStaticFiles();
+
+// Required by MapRazorComponents, which stamps anti-forgery metadata onto its endpoints. It only
+// validates tokens on the form posts and interactive requests that carry them, so the emulator's
+// own API routes are unaffected — a client posting a document batch has no token and is not asked
+// for one.
+app.UseAntiforgery();
+
 app.MapControllers();
+
+app.MapRazorComponents<App>()
+    .AddInteractiveServerRenderMode();
+
+// The machine-readable half of the same checks the dashboard renders. Kept separate from
+// /servicestats, which Aspire already probes: that route exists to imitate Azure's API surface and
+// answers 200 as long as the process is up, whereas this one answers for the emulator's actual
+// ability to serve — a read-only indexes volume is a 200 there and Unhealthy here.
+app.MapHealthChecks("/health");
 
 await app.RunAsync();
 return;

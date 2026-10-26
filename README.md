@@ -76,6 +76,33 @@ You can also run the emulator [with Docker](#building-and-running-with-docker), 
 2. Open AzureSearchEmulator.sln in Visual Studio 2026, Rider, or Visual Studio Code with C# Dev Kit and run it, 
 or cd to the `AzureSearchEmulator` folder and run `dotnet run` from the command-line.
 
+## Web UI
+
+Open the emulator's base address in a browser &mdash; http://localhost:5123 by default &mdash; for a
+dashboard showing whether the emulator is running correctly: the version and environment it is
+running as, how long it has been up, where it is storing indexes, and the result of each health
+check. It refreshes on its own every few seconds.
+
+The emulator is a local development tool, so the UI has no authentication. Do not expose it on an
+address other machines can reach.
+
+The same checks are available at `/health`, which answers `Healthy`, `Degraded`, or `Unhealthy` as
+plain text with a matching status code, for scripts and container health probes:
+
+```bash
+curl http://localhost:5123/health
+```
+
+The checks cover the things that go wrong in the environment rather than in the emulator: whether
+the indexes directory can actually be written to (a read-only Docker volume, or a directory the
+tool was launched from without permission), and whether every index definition on disk still
+parses after being hand-edited. A malformed definition reports `Degraded` and names the problem
+rather than failing an unrelated request later.
+
+Note that this replaces the OData service document that used to be served at the base address.
+Azure AI Search does not serve one either, and the Azure SDK never requests it; `/$metadata` is
+unchanged.
+
 ## Features
 
 This project aims to be a nearly complete, API-compatible emulator of Azure Search for your local development environment,
@@ -140,6 +167,9 @@ Currently, there is support (to varying degrees) for the following Azure Search 
   and vector rankings with Reciprocal Rank Fusion (see Vector fields below)
 * Get service stats (mostly dummy values)
   * [Aspire](https://learn.microsoft.com/en-us/dotnet/aspire/azureai/azureai-search-document-integration) for example uses servicestats route as a health check endpoint.
+
+Beyond the Azure Search API surface, the emulator also serves a web UI and a health endpoint of its
+own (see Web UI above).
 
 ### Suggesters and autocomplete
 

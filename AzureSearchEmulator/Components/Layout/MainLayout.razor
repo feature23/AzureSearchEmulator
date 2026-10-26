@@ -1,0 +1,30 @@
+@inherits LayoutComponentBase
+
+<div class="shell">
+    <header class="masthead">
+        <a class="brand" href="/">
+            <span class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="10.5" cy="10.5" r="6.5" />
+                    <path d="M15.5 15.5 L21 21" />
+                </svg>
+            </span>
+            <span class="brand-text">
+                <strong>Azure Search Emulator</strong>
+                <small>Local development service</small>
+            </span>
+        </a>
+    </header>
+
+    <main class="content">
+        @Body
+    </main>
+
+    <footer class="footwell">
+        <span>Emulating the Azure AI Search REST API for local development.</span>
+        <a class="link" href="https://github.com/feature23/AzureSearchEmulator" target="_blank" rel="noopener">
+            github.com/feature23/AzureSearchEmulator
+        </a>
+    </footer>
+</div>
