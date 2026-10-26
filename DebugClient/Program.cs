@@ -300,7 +300,7 @@ try
     {
         try
         {
-            await indexClient.DeleteIndexAsync(emptyIndexName);
+            await indexClient.DeleteIndexAsync(emptyIndexName, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -312,7 +312,7 @@ try
     Console.WriteLine("12. Deleting index...");
     try
     {
-        await indexClient.DeleteIndexAsync(indexName);
+        await indexClient.DeleteIndexAsync(indexName, CancellationToken.None);
         Console.WriteLine($"   ✓ Index deleted\n");
     }
     catch (Exception ex)
