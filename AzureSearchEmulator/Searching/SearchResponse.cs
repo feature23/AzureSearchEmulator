@@ -19,4 +19,9 @@ public class SearchResponse
     public double? Coverage { get; set; }
 
     public IList<JsonObject> Results { get; set; } = new List<JsonObject>();
+
+    /// <summary>
+    /// The <c>skip</c> for the next page, or null when there is no next page to offer.
+    /// </summary>
+    public int? NextPageSkip { get; set; }
 }

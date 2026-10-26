@@ -242,8 +242,36 @@ try
         Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
     }
 
-    // Test 10: Delete Index
-    Console.WriteLine("10. Deleting index...");
+    // Test 10: Paging through more than one page of results
+    Console.WriteLine("10. Paging through more than 50 results...");
+    try
+    {
+        var pageDocs = Enumerable.Range(0, 120)
+            .Select(i => (object)new { id = $"page-{i:D3}", name = $"Paging document {i}", category = "Paging" })
+            .ToList();
+        await searchClient.IndexDocumentsAsync(IndexDocumentsBatch.Upload(pageDocs));
+
+        // With no Size the emulator returns 50 results and @search.nextPageParameters, which
+        // the SDK follows to fetch each further page.
+        var results = await searchClient.SearchAsync<object>("*", new SearchOptions { IncludeTotalCount = true });
+
+        var pageSizes = new List<int>();
+        await foreach (var page in results.Value.GetResultsAsync().AsPages())
+        {
+            pageSizes.Add(page.Values.Count);
+        }
+
+        var read = pageSizes.Sum();
+        var mark = read == results.Value.TotalCount ? "✓" : "✗";
+        Console.WriteLine($"   {mark} Read {read} of {results.Value.TotalCount} documents in pages of {string.Join(", ", pageSizes)}\n");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"   ✗ Error: {ex.GetType().Name}: {ex.Message}\n");
+    }
+
+    // Test 11: Delete Index
+    Console.WriteLine("11. Deleting index...");
     try
     {
         await indexClient.DeleteIndexAsync(indexName);
