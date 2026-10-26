@@ -497,18 +497,22 @@ An alias is a stable name for one index, so an index can be rebuilt and swapped 
 changing the name they use:
 
 ```http
-PUT /aliases('live')?api-version=2025-11-01-preview
+PUT /aliases('live')?api-version=2026-04-01
 Content-Type: application/json
 
 { "name": "live", "indexes": ["products-v2"] }
 ```
 
-`GET /aliases`, and `GET`, `PUT` and `DELETE` on `/aliases('live')`, behave as the service's do.
-An alias must target exactly one existing index and may not share a name with an index. Search,
-get, count, suggest, autocomplete and document indexing accept the alias wherever they accept an
-index name; the `/indexes` routes do not. Re-pointing an alias is a `PUT` with a new target. An
-alias whose index was deleted answers `404` until it is re-pointed. Aliases are counted in
-`aliasesCount` of `/servicestats`. See `docs/specs/aliases.md`.
+`GET /aliases`, and `GET`, `PUT` and `DELETE` on `/aliases('live')`, behave as the service's do,
+including ETags with `If-Match` and `If-None-Match`. An alias must target exactly one existing
+index, follows the same naming rules as an index, and may not share a name with one.
+
+Search, get, count, suggest, autocomplete and document indexing accept the alias wherever they
+accept an index name, and so do getting and updating an index definition: `GET` and `PUT` on
+`/indexes('live')` read and change the index it targets. Deleting an index does not accept an
+alias, and an index cannot be deleted while an alias targets it — the request fails with `400`
+until the alias is deleted or re-pointed. Re-pointing an alias is a `PUT` with a new target.
+Aliases are counted in `aliasesCount` of `/servicestats`. See `docs/specs/aliases.md`.
 
 ### Filter semantics
 

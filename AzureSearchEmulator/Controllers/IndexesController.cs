@@ -14,6 +14,7 @@ public class IndexesController(
     ISearchIndexRepository searchIndexRepository,
     ISynonymMapRepository synonymMapRepository,
     IAliasRepository aliasRepository,
+    IIndexResolver indexResolver,
     ILuceneDirectoryFactory luceneDirectoryFactory,
     ILuceneIndexReaderFactory luceneIndexReaderFactory,
     ILuceneIndexWriterFactory luceneIndexWriterFactory)
@@ -36,12 +37,19 @@ public class IndexesController(
         return searchIndexRepository.GetAll();
     }
 
+    /// <remarks>
+    /// Resolves an alias, as Azure does for getting and updating a definition. The response is
+    /// the target's definition, under the target's name.
+    /// </remarks>
     [HttpGet]
     [Route("indexes({key})")]
     [Route("indexes/{key}")]
     public async Task<IActionResult> Get(string key)
     {
-        var index = await searchIndexRepository.Get(key);
+        // Strip quotes that may be captured from OData-style URLs
+        key = key.Trim('\'');
+
+        var index = await indexResolver.Get(key);
 
         if (index == null)
         {
@@ -109,6 +117,10 @@ public class IndexesController(
         return IndexJson(index, StatusCodes.Status201Created);
     }
 
+    /// <remarks>
+    /// Addressed by an alias, this updates the alias's target, never creates an index under the
+    /// alias's name. The body may then carry either name; the target's is the one stored.
+    /// </remarks>
     [HttpPut]
     [Route("indexes({key})")]
     [Route("indexes/{key}")]
@@ -122,10 +134,21 @@ public class IndexesController(
             return BadRequest(ModelState);
         }
 
-        if (!string.Equals(index.Name, key, StringComparison.OrdinalIgnoreCase))
+        var existing = await indexResolver.Get(key);
+
+        if (!string.Equals(index.Name, key, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(index.Name, existing?.Name, StringComparison.OrdinalIgnoreCase))
         {
             ModelState.AddModelError(nameof(index.Name), "The index name in the request body must match the name in the URL.");
             return BadRequest(ModelState);
+        }
+
+        if (existing != null && !string.Equals(index.Name, existing.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            // Name is init-only, so the body is re-read under the target's name
+            var renamed = JsonSerializer.SerializeToNode(index, jsonSerializerOptions)!.AsObject();
+            renamed["name"] = existing.Name;
+            index = renamed.Deserialize<SearchIndex>(jsonSerializerOptions)!;
         }
 
         if (ValidateComplexFields(index) is { } complexError)
@@ -158,8 +181,6 @@ public class IndexesController(
             return BadRequest(synonymMapError);
         }
 
-        var existing = await searchIndexRepository.Get(key);
-
         if (existing == null)
         {
             if (await aliasRepository.Get(index.Name) != null)
@@ -188,6 +209,10 @@ public class IndexesController(
         return IndexJson(index);
     }
 
+    /// <remarks>
+    /// Never resolves an alias, as in Azure. An index an alias still targets cannot be deleted
+    /// until the alias is deleted or re-pointed, which Azure answers with <c>400</c>.
+    /// </remarks>
     [HttpDelete]
     [Route("indexes({key})")]
     [Route("indexes/{key}")]
@@ -201,6 +226,23 @@ public class IndexesController(
         if (index == null)
         {
             return NotFound();
+        }
+
+        var aliases = new List<string>();
+
+        await foreach (var searchAlias in aliasRepository.GetAll())
+        {
+            if (searchAlias.Indexes.Any(i => string.Equals(i, index.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                aliases.Add(searchAlias.Name);
+            }
+        }
+
+        if (aliases.Count > 0)
+        {
+            return BadRequest(
+                $"Index '{index.Name}' is mapped to alias(es) {string.Join(", ", aliases.Select(a => $"'{a}'"))}. " +
+                "Delete the alias(es) or map them to a different index before deleting the index.");
         }
 
         // Release Lucene resources BEFORE deleting from disk: the repository does a

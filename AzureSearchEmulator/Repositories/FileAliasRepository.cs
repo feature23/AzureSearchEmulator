@@ -57,43 +57,43 @@ public class FileAliasRepository(JsonSerializerOptions jsonSerializerOptions, IO
         return JsonSerializer.Deserialize<SearchAlias>(await ReadAllTextAsync(file), jsonSerializerOptions);
     }
 
-    public Task Create(SearchAlias alias)
+    public Task Create(SearchAlias searchAlias)
     {
         if (!Directory.Exists(_options.IndexesDirectory))
         {
             Directory.CreateDirectory(_options.IndexesDirectory);
         }
 
-        string file = GetAliasFileName(alias.Name);
+        string file = GetAliasFileName(searchAlias.Name);
 
         if (Exists(file))
         {
-            throw new SearchAliasExistsException(alias.Name);
+            throw new SearchAliasExistsException(searchAlias.Name);
         }
 
-        return WriteAllTextAsync(file, JsonSerializer.Serialize(alias, jsonSerializerOptions));
+        return WriteAllTextAsync(file, JsonSerializer.Serialize(searchAlias, jsonSerializerOptions));
     }
 
-    public Task Update(SearchAlias alias)
+    public Task Update(SearchAlias searchAlias)
     {
         if (!Directory.Exists(_options.IndexesDirectory))
         {
             Directory.CreateDirectory(_options.IndexesDirectory);
         }
 
-        string file = GetAliasFileName(alias.Name);
+        string file = GetAliasFileName(searchAlias.Name);
 
-        return WriteAllTextAsync(file, JsonSerializer.Serialize(alias, jsonSerializerOptions));
+        return WriteAllTextAsync(file, JsonSerializer.Serialize(searchAlias, jsonSerializerOptions));
     }
 
-    public Task<bool> Delete(SearchAlias alias)
+    public Task<bool> Delete(SearchAlias searchAlias)
     {
         if (!Directory.Exists(_options.IndexesDirectory))
         {
             return Task.FromResult(false);
         }
 
-        string file = GetAliasFileName(alias.Name);
+        string file = GetAliasFileName(searchAlias.Name);
 
         if (!Exists(file))
         {

@@ -47,8 +47,31 @@ public sealed class AliasTests : IDisposable
     [InlineData("-leading")]
     [InlineData("has.dot")]
     [InlineData("has/slash")]
+    [InlineData("a")]
+    [InlineData("Upper")]
+    [InlineData("double--dash")]
+    [InlineData("double__underscore")]
     public void InvalidName_IsRejected(string name) =>
         Assert.NotNull(AliasValidator.FindInvalidAlias(Alias(name, "products-v1")));
+
+    [Theory]
+    [InlineData("ab")]
+    [InlineData("under_score-and-dash")]
+    [InlineData("9-starts-with-digit")]
+    public void IndexStyleName_IsAccepted(string name) =>
+        Assert.Null(AliasValidator.FindInvalidAlias(Alias(name, "products-v1")));
+
+    [Fact]
+    public void NameLongerThan128_IsRejected() =>
+        Assert.NotNull(AliasValidator.FindInvalidAlias(Alias(new string('a', 129), "products-v1")));
+
+    [Fact]
+    public void LookupName_IgnoresCase() =>
+        Assert.True(AliasValidator.IsValidLookupName("Live"));
+
+    [Fact]
+    public void TargetNotHeldToAliasNameRules_IsAccepted() =>
+        Assert.Null(AliasValidator.FindInvalidAlias(Alias("live", "Products_V1")));
 
     [Fact]
     public void NoTarget_IsRejected() =>
@@ -65,10 +88,10 @@ public sealed class AliasTests : IDisposable
     [Fact]
     public async Task Repository_RoundTripsAnAliasAndItsUnmodelledProperties()
     {
-        var alias = JsonSerializer.Deserialize<SearchAlias>(
+        var searchAlias = JsonSerializer.Deserialize<SearchAlias>(
             """{ "name": "Live", "indexes": ["a"], "extra": 1 }""", Options)!;
 
-        await _aliases.Create(alias);
+        await _aliases.Create(searchAlias);
 
         var read = await _aliases.Get("live");
 
