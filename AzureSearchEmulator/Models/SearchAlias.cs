@@ -12,8 +12,8 @@ namespace AzureSearchEmulator.Models;
 /// models the target as an array but accepts exactly one entry, so <see cref="Indexes"/> is a
 /// list on the wire and <see cref="Indexing.AliasValidator"/> enforces the single entry.
 ///
-/// Only document routes (search, get, count, suggest, autocomplete, index) resolve an alias.
-/// The <c>/indexes</c> management routes address the index itself, as they do in Azure.
+/// Document routes (search, get, count, suggest, autocomplete, index) resolve an alias, as do
+/// getting and updating an index definition. Deleting an index never does, as in Azure.
 /// </remarks>
 public class SearchAlias
 {

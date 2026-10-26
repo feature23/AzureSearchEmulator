@@ -16,9 +16,9 @@ public interface IAliasRepository
 
     Task<SearchAlias?> Get(string key);
 
-    Task Create(SearchAlias alias);
+    Task Create(SearchAlias searchAlias);
 
-    Task Update(SearchAlias alias);
+    Task Update(SearchAlias searchAlias);
 
-    Task<bool> Delete(SearchAlias alias);
+    Task<bool> Delete(SearchAlias searchAlias);
 }

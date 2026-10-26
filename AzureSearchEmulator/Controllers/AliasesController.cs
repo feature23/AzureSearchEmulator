@@ -13,6 +13,11 @@ namespace AzureSearchEmulator.Controllers;
 /// Shaped like <see cref="SynonymMapsController"/>, and for the same reasons: a plain
 /// <see cref="ControllerBase"/> writing System.Text.Json, so properties the emulator does not
 /// model survive a round trip, with the <c>value</c> wrapper of a listing written by hand.
+///
+/// Unlike synonym maps, aliases carry an ETag that every write renews, and <c>PUT</c> and
+/// <c>DELETE</c> honour <c>If-Match</c> and <c>If-None-Match</c> with <c>412</c>. Re-pointing an
+/// alias is how traffic is cut over between indexes, so it is the write most worth guarding
+/// against a concurrent one.
 /// </remarks>
 [ApiController]
 public class AliasesController(
@@ -27,9 +32,9 @@ public class AliasesController(
     {
         var aliases = new List<SearchAlias>();
 
-        await foreach (var alias in aliasRepository.GetAll())
+        await foreach (var searchAlias in aliasRepository.GetAll())
         {
-            aliases.Add(alias);
+            aliases.Add(searchAlias);
         }
 
         return Json(new { value = aliases });
@@ -42,45 +47,47 @@ public class AliasesController(
     {
         key = key.Trim('\'');
 
-        if (!AliasValidator.IsValidName(key))
+        if (!AliasValidator.IsValidLookupName(key))
         {
             return NotFound();
         }
 
-        var alias = await aliasRepository.Get(key);
+        var searchAlias = await aliasRepository.Get(key);
 
-        if (alias == null)
+        if (searchAlias == null)
         {
             return NotFound($"Alias '{key}' was not found.");
         }
 
-        return Json(alias);
+        return Json(searchAlias);
     }
 
     [HttpPost]
     [Route("aliases")]
-    public async Task<IActionResult> Post([FromBody] SearchAlias? alias)
+    public async Task<IActionResult> Post([FromBody] SearchAlias? searchAlias)
     {
-        if (alias == null || !ModelState.IsValid)
+        if (searchAlias == null || !ModelState.IsValid)
         {
             return BadRequest(ModelState);
         }
 
-        if (await FindInvalidAlias(alias) is { } error)
+        if (await FindInvalidAlias(searchAlias) is { } error)
         {
             return BadRequest(error);
         }
 
+        searchAlias.ETag = NewETag();
+
         try
         {
-            await aliasRepository.Create(alias);
+            await aliasRepository.Create(searchAlias);
         }
         catch (SearchAliasExistsException ex)
         {
             return Conflict(ex.Message);
         }
 
-        return Json(alias, StatusCodes.Status201Created);
+        return Json(searchAlias, StatusCodes.Status201Created);
     }
 
     /// <remarks>
@@ -90,37 +97,46 @@ public class AliasesController(
     [HttpPut]
     [Route("aliases({key})")]
     [Route("aliases/{key}")]
-    public async Task<IActionResult> Put(string key, [FromBody] SearchAlias? alias)
+    public async Task<IActionResult> Put(string key, [FromBody] SearchAlias? searchAlias)
     {
         key = key.Trim('\'');
 
-        if (alias == null || !ModelState.IsValid)
+        if (searchAlias == null || !ModelState.IsValid)
         {
             return BadRequest(ModelState);
         }
 
-        if (!string.Equals(alias.Name, key, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(searchAlias.Name, key, StringComparison.OrdinalIgnoreCase))
         {
-            ModelState.AddModelError(nameof(alias.Name), "The alias name in the request body must match the name in the URL.");
+            ModelState.AddModelError(nameof(searchAlias.Name), "The alias name in the request body must match the name in the URL.");
 
             return BadRequest(ModelState);
         }
 
-        if (await FindInvalidAlias(alias) is { } error)
+        if (await FindInvalidAlias(searchAlias) is { } error)
         {
             return BadRequest(error);
         }
 
-        if (await aliasRepository.Get(key) == null)
-        {
-            await aliasRepository.Create(alias);
+        var existing = await aliasRepository.Get(key);
 
-            return Json(alias, StatusCodes.Status201Created);
+        if (!PreconditionsHold(existing))
+        {
+            return StatusCode(StatusCodes.Status412PreconditionFailed);
         }
 
-        await aliasRepository.Update(alias);
+        searchAlias.ETag = NewETag();
 
-        return Json(alias);
+        if (existing == null)
+        {
+            await aliasRepository.Create(searchAlias);
+
+            return Json(searchAlias, StatusCodes.Status201Created);
+        }
+
+        await aliasRepository.Update(searchAlias);
+
+        return Json(searchAlias);
     }
 
     [HttpDelete]
@@ -130,45 +146,86 @@ public class AliasesController(
     {
         key = key.Trim('\'');
 
-        if (!AliasValidator.IsValidName(key))
+        if (!AliasValidator.IsValidLookupName(key))
         {
             return NotFound();
         }
 
-        var alias = await aliasRepository.Get(key);
+        var searchAlias = await aliasRepository.Get(key);
 
-        if (alias == null)
+        if (searchAlias == null)
         {
             return NotFound($"Alias '{key}' was not found.");
         }
 
-        await aliasRepository.Delete(alias);
+        if (!PreconditionsHold(searchAlias))
+        {
+            return StatusCode(StatusCodes.Status412PreconditionFailed);
+        }
+
+        await aliasRepository.Delete(searchAlias);
 
         return NoContent();
     }
 
-    private async Task<string?> FindInvalidAlias(SearchAlias alias)
+    private async Task<string?> FindInvalidAlias(SearchAlias searchAlias)
     {
-        if (AliasValidator.FindInvalidAlias(alias) is { } error)
+        if (AliasValidator.FindInvalidAlias(searchAlias) is { } error)
         {
             return error;
         }
 
-        if (await searchIndexRepository.Get(alias.Name) != null)
+        if (await searchIndexRepository.Get(searchAlias.Name) != null)
         {
-            return $"Alias name '{alias.Name}' is already used by an index.";
+            return $"Alias name '{searchAlias.Name}' is already used by an index.";
         }
 
-        if (await searchIndexRepository.Get(alias.Indexes[0]) == null)
+        if (await searchIndexRepository.Get(searchAlias.Indexes[0]) == null)
         {
-            return $"Alias '{alias.Name}' targets index '{alias.Indexes[0]}', which does not exist.";
+            return $"Alias '{searchAlias.Name}' targets index '{searchAlias.Indexes[0]}', which does not exist.";
         }
 
         return null;
     }
 
+    /// <summary>
+    /// Checks <c>If-Match</c> and <c>If-None-Match</c> against the stored alias, or null when
+    /// there is none. <c>*</c> matches any alias that exists.
+    /// </summary>
+    private bool PreconditionsHold(SearchAlias? existing)
+    {
+        var ifMatch = ParseETags(Request.Headers.IfMatch);
+        var ifNoneMatch = ParseETags(Request.Headers.IfNoneMatch);
+
+        if (ifMatch.Count > 0 && !Matches(ifMatch, existing))
+        {
+            return false;
+        }
+
+        return ifNoneMatch.Count == 0 || !Matches(ifNoneMatch, existing);
+    }
+
+    private static bool Matches(List<string> etags, SearchAlias? existing) =>
+        existing != null && (etags.Contains("*") || etags.Contains(existing.ETag ?? ""));
+
+    private static List<string> ParseETags(IEnumerable<string?> values) =>
+        values
+            .SelectMany(v => (v ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToList();
+
+    /// <remarks>
+    /// Quoted, as Azure's are, so the value in <c>@odata.etag</c> can be sent back in
+    /// <c>If-Match</c> unchanged.
+    /// </remarks>
+    private static string NewETag() => $"\"0x{DateTime.UtcNow.Ticks:X}\"";
+
     private ContentResult Json(object value, int statusCode = StatusCodes.Status200OK)
     {
+        if (value is SearchAlias { ETag: { } etag })
+        {
+            Response.Headers.ETag = etag;
+        }
+
         if (statusCode == StatusCodes.Status201Created)
         {
             Response.Headers.Location =
