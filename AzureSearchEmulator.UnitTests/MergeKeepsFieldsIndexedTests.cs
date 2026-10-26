@@ -188,6 +188,60 @@ public class MergeKeepsFieldsIndexedTests : IDisposable
         Assert.Equal(1, await Count(new SearchRequest { Filter = "Rating eq 5 and Source eq 'blob-1'" }));
     }
 
+    private IList<IndexingResult> IndexBatch(params IndexDocumentAction[] actions) =>
+        _indexer.IndexDocuments(_index, actions).Value;
+
+    /// <summary>
+    /// The actions in a batch apply in order, so a merge reads the document as the earlier actions on the same key
+    /// in that batch left it.
+    /// </summary>
+    [Fact]
+    public async Task TwoMergesOfTheSameKeyInOneBatch_KeepBothChanges()
+    {
+        Index(new UploadIndexDocumentAction(Doc("1")));
+
+        var results = IndexBatch(
+            new MergeIndexDocumentAction(TitleChange("1")),
+            new MergeIndexDocumentAction(new JsonObject { ["Id"] = "1", ["Source"] = "blob-9" }));
+
+        Assert.All(results, r => Assert.True(r.Status, r.ErrorMessage));
+
+        var doc = await _searcher.GetDoc(_index, "1");
+
+        Assert.Equal("New title", doc?["Title"]?.GetValue<string>());
+        Assert.Equal("blob-9", doc?["Source"]?.GetValue<string>());
+        Assert.Equal(1, await Count(new SearchRequest { Filter = "Title eq 'New title' and Source eq 'blob-9'" }));
+    }
+
+    [Fact]
+    public async Task UploadAndTwoMergesOfTheSameKeyInOneBatch_KeepEveryChange()
+    {
+        var results = IndexBatch(
+            new UploadIndexDocumentAction(Doc("1")),
+            new MergeIndexDocumentAction(TitleChange("1")),
+            new MergeIndexDocumentAction(new JsonObject { ["Id"] = "1", ["Rating"] = 5 }));
+
+        Assert.All(results, r => Assert.True(r.Status, r.ErrorMessage));
+        Assert.Equal(1, await Count(new SearchRequest { Filter = "Title eq 'New title' and Rating eq 5 and Source eq 'blob-1'" }));
+    }
+
+    /// <summary>
+    /// A merge after a delete of the same key in one batch must not bring the deleted document back.
+    /// </summary>
+    [Fact]
+    public async Task MergeAfterADeleteOfTheSameKeyInOneBatch_IsNotFound()
+    {
+        Index(new UploadIndexDocumentAction(Doc("1")));
+
+        var results = IndexBatch(
+            new MergeIndexDocumentAction(new JsonObject { ["Id"] = "1", ["Rating"] = 5 }),
+            new DeleteIndexDocumentAction(new JsonObject { ["Id"] = "1" }),
+            new MergeIndexDocumentAction(TitleChange("1")));
+
+        Assert.Equal([200, 200, 404], results.Select(r => r.StatusCode));
+        Assert.Null(await _searcher.GetDoc(_index, "1"));
+    }
+
     private class SharedDirectoryFactory(Lucene.Net.Store.Directory directory) : ILuceneDirectoryFactory, ILuceneIndexReaderFactory
     {
         public Lucene.Net.Store.Directory GetDirectory(string indexName) => directory;

@@ -1,6 +1,5 @@
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.SearchData;
-using Lucene.Net.Index;
 
 namespace AzureSearchEmulator.Indexing;
 
@@ -20,25 +19,12 @@ public class LuceneNetSearchIndexer(
 
         var results = new IndexDocumentsResult();
 
-        var readerLazy = new Lazy<IndexReader>(() => writer.GetReader(true));
-
-        var context = new IndexingContext(index, key, writer, readerLazy);
-
-        try
+        using (var context = new IndexingContext(index, key, writer))
         {
             foreach (var action in actions)
             {
                 var result = action.PerformIndexingAsync(context);
                 results.Value.Add(result);
-            }
-        }
-        finally
-        {
-            // An NRT reader pins segment files, so it must be released even when an action
-            // throws — otherwise the leak blocks later deletion of those files on Windows.
-            if (readerLazy.IsValueCreated)
-            {
-                readerLazy.Value.Dispose();
             }
         }
 

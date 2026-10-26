@@ -70,7 +70,7 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
     /// </remarks>
     protected void MergeDocument(IndexingContext context, Term keyTerm, bool uploadIfMissing)
     {
-        var searcher = new IndexSearcher(context.Reader.Value);
+        var searcher = new IndexSearcher(context.GetReader(keyTerm));
 
         var docs = searcher.Search(new TermQuery(keyTerm), 1);
 
@@ -99,7 +99,7 @@ public abstract class UpsertIndexDocumentActionBase(JsonObject item) : IndexDocu
             merged[name] = value?.DeepClone();
         }
 
-        context.Writer.UpdateDocument(keyTerm, GetDocFields(context.Index, merged));
+        context.UpdateDocument(keyTerm, GetDocFields(context.Index, merged));
     }
 
     protected abstract void IndexDocument(IndexingContext context, Term keyTerm);
