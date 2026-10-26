@@ -9,7 +9,7 @@ namespace AzureSearchEmulator.Controllers;
 
 public class DocumentIndexingController(
     JsonSerializerOptions jsonSerializerOptions,
-    ISearchIndexRepository searchIndexRepository,
+    IIndexResolver indexResolver,
     ISearchIndexer searchIndexer,
     ILogger<DocumentIndexingController> logger)
     : ODataController
@@ -36,7 +36,7 @@ public class DocumentIndexingController(
         // Strip quotes that may be captured from OData-style URLs
         indexKey = indexKey.Trim('\'');
 
-        var index = await searchIndexRepository.Get(indexKey);
+        var index = await indexResolver.Get(indexKey);
 
         if (index == null)
         {

@@ -8,7 +8,8 @@ namespace AzureSearchEmulator.Controllers;
 [Route("servicestats")]
 public class ServiceStatsController(
     ISearchIndexRepository searchIndexRepository,
-    ISynonymMapRepository synonymMapRepository) : ControllerBase
+    ISynonymMapRepository synonymMapRepository,
+    IAliasRepository aliasRepository) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get()
@@ -24,7 +25,13 @@ public class ServiceStatsController(
         {
             synonymMapCount++;
         }
-        
+
+        var aliasCount = 0;
+        await foreach (var _ in aliasRepository.GetAll())
+        {
+            aliasCount++;
+        }
+
         var stats = new Dictionary<string, object>
         {
             // Named for a GA version whose surface the emulator actually covers. The previous
@@ -71,7 +78,7 @@ public class ServiceStatsController(
                 },
                 aliasesCount = new
                 {
-                    usage = 0,
+                    usage = aliasCount,
                     quota = 30
                 },
                 vectorIndexSize = new

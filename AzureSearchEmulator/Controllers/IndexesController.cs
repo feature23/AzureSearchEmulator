@@ -13,6 +13,7 @@ public class IndexesController(
     JsonSerializerOptions jsonSerializerOptions,
     ISearchIndexRepository searchIndexRepository,
     ISynonymMapRepository synonymMapRepository,
+    IAliasRepository aliasRepository,
     ILuceneDirectoryFactory luceneDirectoryFactory,
     ILuceneIndexReaderFactory luceneIndexReaderFactory,
     ILuceneIndexWriterFactory luceneIndexWriterFactory)
@@ -89,6 +90,11 @@ public class IndexesController(
             return BadRequest(synonymMapError);
         }
 
+        if (await aliasRepository.Get(index.Name) != null)
+        {
+            return Conflict($"Index name '{index.Name}' is already used by an alias.");
+        }
+
         try
         {
             await searchIndexRepository.Create(index);
@@ -156,6 +162,11 @@ public class IndexesController(
 
         if (existing == null)
         {
+            if (await aliasRepository.Get(index.Name) != null)
+            {
+                return Conflict($"Index name '{index.Name}' is already used by an alias.");
+            }
+
             await searchIndexRepository.Create(index);
             return IndexJson(index, StatusCodes.Status201Created);
         }
