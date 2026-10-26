@@ -22,9 +22,15 @@ public class DocumentIndexingController(
     /// </summary>
     private const int MaxLoggedBodyLength = 4096;
 
+    /// <remarks>
+    /// Azure accepts both <c>docs/search.index</c> and the shorter <c>docs/index</c> for a batch;
+    /// the Go and Java SDKs post to the latter.
+    /// </remarks>
     [HttpPost]
     [Route("indexes({indexKey})/docs/search.index")]
     [Route("indexes/{indexKey}/docs/search.index")]
+    [Route("indexes({indexKey})/docs/index")]
+    [Route("indexes/{indexKey}/docs/index")]
     public async Task<IActionResult> IndexDocuments(string indexKey)
     {
         // Strip quotes that may be captured from OData-style URLs
