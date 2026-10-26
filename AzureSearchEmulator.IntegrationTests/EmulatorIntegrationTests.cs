@@ -90,6 +90,33 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
     }
 
     [Fact]
+    public async Task EmptyIndex_ShouldAnswerReadsWithoutDocuments()
+    {
+        const string indexName = "test-empty-index";
+        var indexClient = factory.CreateSearchIndexClient();
+        var searchClient = factory.CreateSearchClient(indexName);
+
+        // Arrange - Create the index and write nothing to it
+        await CreateIndexAsync(indexClient, indexName);
+
+        // Act
+        var results = await searchClient.SearchAsync<Product>("*", new SearchOptions { IncludeTotalCount = true }, TestContext.Current.CancellationToken);
+        var items = await results.Value.GetResultsAsync().ToListAsync(TestContext.Current.CancellationToken);
+        var count = await searchClient.GetDocumentCountAsync(TestContext.Current.CancellationToken);
+        var missing = await Assert.ThrowsAsync<Azure.RequestFailedException>(
+            () => searchClient.GetDocumentAsync<Product>("1", cancellationToken: TestContext.Current.CancellationToken));
+
+        // Assert
+        Assert.Empty(items);
+        Assert.Equal(0, results.Value.TotalCount);
+        Assert.Equal(0, count.Value);
+        Assert.Equal(404, missing.Status);
+
+        // Cleanup
+        await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task SearchDocuments_SimpleQuery_ShouldReturnResults()
     {
         const string indexName = "test-simple-search";

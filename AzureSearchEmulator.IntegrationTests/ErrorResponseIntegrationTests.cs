@@ -48,11 +48,6 @@ public class ErrorResponseIntegrationTests(EmulatorFactory factory)
     /// <summary>
     /// Creates the index and indexes a document.
     /// </summary>
-    /// <remarks>
-    /// The document matters: with an empty index the Lucene directory does not exist yet, so a
-    /// query fails on the missing directory before it ever reaches the filter parser, and the
-    /// test would assert on the wrong error.
-    /// </remarks>
     private async Task<SearchIndexClient> SetUpAsync(string indexName)
     {
         var indexClient = factory.CreateSearchIndexClient();
@@ -180,15 +175,14 @@ public class ErrorResponseIntegrationTests(EmulatorFactory factory)
     /// An unexpected fault still answers in the envelope, and without leaking internals.
     /// </summary>
     /// <remarks>
-    /// Searching an index that has never had a document written to it currently trips a Lucene
-    /// DirectoryNotFoundException, because the segment directory is only created on first write.
-    /// That 500 is arguably its own bug — the real service answers an empty result set — so this
-    /// test deliberately asserts only on the SHAPE of an unexpected failure, not on this query
-    /// being one. Should the empty-index case be fixed to return results, the assertions below
-    /// stop applying and the test should be pointed at another unexpected fault rather than
-    /// being made to keep this 500 alive.
+    /// A full Lucene query that does not parse currently escapes as a Lucene parse exception,
+    /// which is not mapped to a status, so it answers 500 where the real service answers 400.
+    /// That is arguably its own bug, so this test deliberately asserts only on the SHAPE of an
+    /// unexpected failure, not on this query being one. Should malformed query syntax be
+    /// fixed to answer 400, the assertions below stop applying and the test should be pointed
+    /// at another unexpected fault rather than being made to keep this 500 alive.
     ///
-    /// The generic message is the point: the underlying exception names the emulator's own
+    /// The generic message is the point: the underlying exception can name the emulator's own
     /// filesystem paths, and those belong in the log rather than the response body.
     /// </remarks>
     [Fact]
@@ -200,7 +194,7 @@ public class ErrorResponseIntegrationTests(EmulatorFactory factory)
 
         var http = factory.CreateHttpClient();
         var response = await http.GetAsync(
-            $"/indexes/{indexName}/docs?search=*",
+            $"/indexes/{indexName}/docs?search=%28&queryType=full",
             TestContext.Current.CancellationToken);
 
         var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
