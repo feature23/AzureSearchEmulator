@@ -612,6 +612,7 @@ public class ODataQueryVisitor(
             float floatValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)floatValue, true, false),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, doubleValue, true, false),
             decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)decimalValue, true, false),
+            DateTimeOffset dateValue => NumericRangeQuery.NewInt64Range(path, long.MinValue, dateValue.ToUnixTimeMilliseconds(), true, false),
             _ => throw new NotImplementedException($"Less than comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
@@ -626,6 +627,7 @@ public class ODataQueryVisitor(
             float floatValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)floatValue, true, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, doubleValue, true, true),
             decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, double.NegativeInfinity, (double)decimalValue, true, true),
+            DateTimeOffset dateValue => NumericRangeQuery.NewInt64Range(path, long.MinValue, dateValue.ToUnixTimeMilliseconds(), true, true),
             _ => throw new NotImplementedException($"Less than or equal comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
@@ -640,6 +642,7 @@ public class ODataQueryVisitor(
             float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, double.PositiveInfinity, false, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, doubleValue, double.PositiveInfinity, false, true),
             decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, (double)decimalValue, double.PositiveInfinity, false, true),
+            DateTimeOffset dateValue => NumericRangeQuery.NewInt64Range(path, dateValue.ToUnixTimeMilliseconds(), long.MaxValue, false, true),
             _ => throw new NotImplementedException($"Greater than comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
@@ -654,6 +657,7 @@ public class ODataQueryVisitor(
             float floatValue => NumericRangeQuery.NewDoubleRange(path, (double)floatValue, double.PositiveInfinity, true, true),
             double doubleValue => NumericRangeQuery.NewDoubleRange(path, doubleValue, double.PositiveInfinity, true, true),
             decimal decimalValue => NumericRangeQuery.NewDoubleRange(path, (double)decimalValue, double.PositiveInfinity, true, true),
+            DateTimeOffset dateValue => NumericRangeQuery.NewInt64Range(path, dateValue.ToUnixTimeMilliseconds(), long.MaxValue, true, true),
             _ => throw new NotImplementedException($"Greater than or equal comparison not supported for type {literalToken.Value?.GetType().Name}")
         };
     }
