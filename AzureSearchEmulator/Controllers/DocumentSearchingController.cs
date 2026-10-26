@@ -177,6 +177,19 @@ public class DocumentSearchingController(
             oDataResponse["@search.facets"] = BuildFacets(response.Facets);
         }
 
+        if (response.Answers != null)
+        {
+            oDataResponse["@search.answers"] = new JsonArray(response.Answers
+                .Select(answer => (JsonNode)new JsonObject
+                {
+                    ["key"] = answer.Key,
+                    ["text"] = answer.Text,
+                    ["highlights"] = answer.Highlights,
+                    ["score"] = answer.Score,
+                })
+                .ToArray());
+        }
+
         oDataResponse["value"] = new JsonArray(response.Results.OfType<JsonNode>().ToArray());
 
         // Only on POST, as in Azure: a GET gets a nextLink to another GET, which is not built here.

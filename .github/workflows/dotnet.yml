@@ -22,6 +22,13 @@ jobs:
       uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
       with:
         dotnet-version: 10.0.x
+    # The semantic ranker integration test mounts this folder into its container as the model cache
+    # (see SemanticRankerEmulatorFactory). Keyed on the file that pins the model URLs.
+    - name: Cache semantic ranker model
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /tmp/azsearchemu-tests-models
+        key: semantic-model-${{ hashFiles('AzureSearchEmulator/Semantic/SemanticRankerOptions.cs') }}
     - name: Restore dependencies
       run: dotnet restore
     - name: Build

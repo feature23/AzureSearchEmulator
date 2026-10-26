@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Nodes;
+using AzureSearchEmulator.Semantic;
 
 namespace AzureSearchEmulator.Searching;
 
@@ -19,6 +20,12 @@ public class SearchResponse
     public double? Coverage { get; set; }
 
     public IList<JsonObject> Results { get; set; } = new List<JsonObject>();
+
+    /// <summary>
+    /// The extracted answers of a semantic query that asked for them, or null when none were
+    /// asked for (issue #109).
+    /// </summary>
+    public IReadOnlyList<SemanticAnswer>? Answers { get; set; }
 
     /// <summary>
     /// The <c>skip</c> for the next page, or null when there is no next page to offer.

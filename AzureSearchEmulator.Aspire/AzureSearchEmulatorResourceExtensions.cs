@@ -90,5 +90,27 @@ public static class AzureSearchEmulatorResourceExtensions
                 target: "/app/indexes",
                 isReadOnly: isReadOnly);
         }
+
+        /// <summary>
+        /// Ranks semantic queries with an open-weight cross-encoder model instead of the default
+        /// word-overlap heuristic.
+        /// </summary>
+        /// <param name="modelsVolumeName">
+        /// Optional name for the volume the model is cached in. If null, a name will be generated.
+        /// </param>
+        /// <returns>The resource builder for further configuration.</returns>
+        /// <remarks>
+        /// The emulator downloads the model (about 90 MB) on its first start and loads it before it
+        /// begins accepting requests. The volume keeps it across container restarts, so later
+        /// starts skip the download.
+        /// </remarks>
+        public IResourceBuilder<AzureSearchEmulatorResource> WithSemanticRanker(string? modelsVolumeName = null)
+        {
+            return builder
+                .WithEnvironment("Emulator__SemanticRanker__Enabled", "true")
+                .WithVolume(
+                    name: modelsVolumeName ?? VolumeNameGenerator.Generate(builder, "models"),
+                    target: "/app/models");
+        }
     }
 }

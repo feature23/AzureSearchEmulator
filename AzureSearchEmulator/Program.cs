@@ -9,6 +9,7 @@ using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.Routing;
 using AzureSearchEmulator.SearchData;
 using AzureSearchEmulator.Searching;
+using AzureSearchEmulator.Semantic;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OData;
@@ -137,6 +138,19 @@ builder.Services.AddSingleton<ILuceneIndexReaderFactory, LuceneDirectoryReaderFa
 // committing any pending changes.
 builder.Services.AddSingleton<ILuceneIndexWriterFactory, LuceneNetIndexWriterFactory>();
 builder.Services.AddTransient<IIndexSearcher, LuceneNetIndexSearcher>();
+
+// Semantic queries rerank with a heuristic unless the model-backed ranker is switched on, in which
+// case its model is downloaded and loaded before the emulator starts listening (issue #109).
+builder.Services.Configure<SemanticRankerOptions>(builder.Configuration.GetSection(SemanticRankerOptions.SectionName));
+builder.Services.AddSingleton<ISemanticScorer>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<SemanticRankerOptions>>().Value;
+
+    return options.Enabled
+        ? new CrossEncoderSemanticScorer(options.GetModelPath(), options.GetVocabularyPath())
+        : new LexicalSemanticScorer();
+});
+builder.Services.AddHostedService<SemanticModelDownloader>();
 builder.Services.AddSingleton<ISearchIndexer, LuceneNetSearchIndexer>();
 
 // Health checks, surfaced both at /health for a monitor and on the dashboard for a human

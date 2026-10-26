@@ -77,7 +77,7 @@ Any API key is accepted; the emulator does not authenticate requests.
 
 Index management, document indexing, and search — including filters, facets, ordering,
 highlighting, suggesters and autocomplete, scoring profiles, analyzers, normalizers, synonym
-maps, geospatial queries, complex types, and vector search with hybrid ranking.
+maps, geospatial queries, complex types, vector search with hybrid ranking, and semantic ranking.
 
 For the full list of supported REST APIs and search parameters, along with the behavioural
 differences from the real service, see the

@@ -14,6 +14,18 @@ var search = builder.AddAzureSearchEmulator("search")
 
 You can leave off the `WithIndexesVolume()` if you want your search index data to be transient.
 
+Semantic queries work out of the box, ranked by a simple word-overlap heuristic. To rank them
+with an open-weight cross-encoder model instead, add `WithSemanticRanker()`:
+
+```csharp
+var search = builder.AddAzureSearchEmulator("search")
+    .WithIndexesVolume()
+    .WithSemanticRanker();
+```
+
+The emulator downloads the model (about 90 MB) on its first start, into a volume so later starts
+skip the download.
+
 ## HTTPS certificates
 
 The emulator serves HTTPS using your machine's ASP.NET Core development certificate, which Aspire

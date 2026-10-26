@@ -18,7 +18,15 @@ namespace AzureSearchEmulator.IntegrationTests;
 /// </summary>
 public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
 {
-    private readonly int _httpsPort = Random.Shared.Next(5000, 60000);
+    /// <summary>
+    /// The port Kestrel listens on inside the container.
+    /// </summary>
+    /// <remarks>
+    /// Fixed, with the host port left for Docker to assign. Picking a random host port here
+    /// instead collided now and then with one already in use on the CI runner, whose ephemeral
+    /// range it overlapped, and the whole test class failed with "address already in use".
+    /// </remarks>
+    private const int HttpsPort = 8443;
 
     private const string CertPassword = "integration-tests";
 
@@ -47,23 +55,29 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
 
         _certDirectory = CreateThrowawayCertificate();
 
-        _container = new ContainerBuilder(image)
-            .WithPortBinding(_httpsPort, _httpsPort)
-            .WithEnvironment("ASPNETCORE_URLS", $"https://+:{_httpsPort}")
-            .WithEnvironment("ASPNETCORE_HTTPS_PORT", _httpsPort.ToString())
+        _container = ConfigureContainer(new ContainerBuilder(image)
+            .WithPortBinding(HttpsPort, assignRandomHostPort: true)
+            .WithEnvironment("ASPNETCORE_URLS", $"https://+:{HttpsPort}")
+            .WithEnvironment("ASPNETCORE_HTTPS_PORT", HttpsPort.ToString())
             .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Password", CertPassword)
             .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/https/aspnetapp.pfx")
             .WithBindMount(_certDirectory, "/https", AccessMode.ReadOnly)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(_httpsPort)) // NOTE: we cannot use HTTP wait strategy due to self-signed cert
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(HttpsPort))) // NOTE: we cannot use HTTP wait strategy due to self-signed cert
             .Build();
 
         await image.CreateAsync();
         await _container.StartAsync();
 
         // Get the mapped HTTPS port
-        var mappedPort = _container.GetMappedPublicPort(_httpsPort);
+        var mappedPort = _container.GetMappedPublicPort(HttpsPort);
         Endpoint = new Uri($"https://localhost:{mappedPort}");
     }
+
+    /// <summary>
+    /// Adds settings of a derived factory's own to the container, such as enabling an opt-in
+    /// feature.
+    /// </summary>
+    protected virtual ContainerBuilder ConfigureContainer(ContainerBuilder builder) => builder;
 
     /// <summary>
     /// Gets a key credential for use with the Azure Search SDK (any key works for the emulator).
