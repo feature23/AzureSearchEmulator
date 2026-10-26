@@ -1,0 +1,69 @@
+@using AzureSearchEmulator.Dashboard
+@inject IJSRuntime JS
+
+@* Indented, syntax-coloured JSON (issue #92). Formatting and tokenizing happen once per change of
+   Json rather than on every render, since the search page re-renders on every interaction with its
+   form. *@
+<div class="code-block">
+    <pre class="code"><code>@foreach (var token in _tokens)
+{
+    if (token.Kind == JsonTokenKind.Plain)
+    {
+        @token.Text
+    }
+    else
+    {
+        <span class="@TokenClass(token.Kind)">@token.Text</span>
+    }
+}</code></pre>
+    <button class="button copy" type="button" @onclick="CopyAsync">@(_copied ? "Copied" : "Copy")</button>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public string Json { get; set; } = "";
+
+    private string? _rendered;
+    private string _formatted = "";
+    private IReadOnlyList<JsonToken> _tokens = [];
+    private bool _copied;
+
+    protected override void OnParametersSet()
+    {
+        if (Json == _rendered)
+        {
+            return;
+        }
+
+        _rendered = Json;
+        _formatted = JsonHighlighter.Format(Json);
+        _tokens = JsonHighlighter.Tokenize(_formatted);
+        _copied = false;
+    }
+
+    private async Task CopyAsync()
+    {
+        try
+        {
+            // Straight to the browser's clipboard API, so the dashboard still ships no script of
+            // its own. It is only available to secure contexts, which localhost counts as.
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _formatted);
+            _copied = true;
+        }
+        catch (JSException)
+        {
+            // Served from a non-localhost http:// address, where the clipboard is off limits. The
+            // text can still be selected by hand.
+        }
+    }
+
+    private static string TokenClass(JsonTokenKind kind) => kind switch
+    {
+        JsonTokenKind.Key => "tok-key",
+        JsonTokenKind.String => "tok-string",
+        JsonTokenKind.Number => "tok-number",
+        JsonTokenKind.Boolean => "tok-literal",
+        JsonTokenKind.Null => "tok-literal",
+        _ => "tok-punct"
+    };
+}

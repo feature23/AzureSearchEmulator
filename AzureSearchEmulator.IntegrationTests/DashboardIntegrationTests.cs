@@ -38,6 +38,27 @@ public class DashboardIntegrationTests(EmulatorFactory factory)
         Assert.Contains("Running normally", html);
     }
 
+    /// <remarks>
+    /// The search page renders only once its circuit connects (issue #92), so the static response
+    /// carries the layout rather than results; what this guards is the route existing alongside the
+    /// API's own routes and the navigation reaching it.
+    /// </remarks>
+    [Fact]
+    public async Task Search_ServesThePage()
+    {
+        await factory.WaitUntilServingAsync();
+        using var client = factory.CreateHttpClient();
+
+        var response = await client.GetAsync("/search", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+
+        var html = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains("href=\"search\" class=\"topnav-link active\"", html);
+    }
+
     [Fact]
     public async Task Dashboard_StylesheetIsServed()
     {
@@ -48,6 +69,23 @@ public class DashboardIntegrationTests(EmulatorFactory factory)
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/css", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    /// <remarks>
+    /// Without Blazor's script the pages still prerender, so the dashboard looks fine, but nothing
+    /// interactive ever starts and the search page, which is not prerendered, stays blank. The
+    /// script comes from a package the SDK can leave out of a publish while <c>dotnet run</c> keeps
+    /// working, so it is checked here against the built image (issue #92).
+    /// </remarks>
+    [Fact]
+    public async Task Dashboard_BlazorScriptIsServed()
+    {
+        await factory.WaitUntilServingAsync();
+        using var client = factory.CreateHttpClient();
+
+        var response = await client.GetAsync("/_framework/blazor.web.js", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     /// <remarks>

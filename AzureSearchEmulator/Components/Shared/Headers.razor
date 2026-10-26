@@ -1,0 +1,17 @@
+@* Collapsed by default: the body is what a reader is usually after, and the SDK sends enough
+   headers to push it below the fold. *@
+<details class="http-headers">
+    <summary>Headers <span class="muted">(@Items.Count)</span></summary>
+    <dl>
+        @foreach (var (name, value) in Items)
+        {
+            <dt>@name</dt>
+            <dd>@value</dd>
+        }
+    </dl>
+</details>
+
+@code {
+    [Parameter, EditorRequired]
+    public IReadOnlyList<KeyValuePair<string, string>> Items { get; set; } = [];
+}

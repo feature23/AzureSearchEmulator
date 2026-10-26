@@ -37,6 +37,34 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
     }
 
+    /// <remarks>
+    /// The SDK lists names with <c>$select=name</c>, which the listing endpoint used to throw on
+    /// (found while building the dashboard's search page, issue #92).
+    /// </remarks>
+    [Fact]
+    public async Task GetIndexNames_ShouldListCreatedIndex()
+    {
+        const string indexName = "test-get-index-names";
+        var indexClient = factory.CreateSearchIndexClient();
+        await CreateIndexAsync(indexClient, indexName);
+
+        try
+        {
+            var names = new List<string>();
+
+            await foreach (var name in indexClient.GetIndexNamesAsync(TestContext.Current.CancellationToken))
+            {
+                names.Add(name);
+            }
+
+            Assert.Contains(indexName, names);
+        }
+        finally
+        {
+            await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+        }
+    }
+
     [Fact]
     public async Task UploadDocuments_ShouldSucceed()
     {

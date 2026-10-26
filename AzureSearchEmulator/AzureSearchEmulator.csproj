@@ -21,9 +21,15 @@
 		<Authors>Paul Irwin</Authors>
 		<PackageIcon>logo.png</PackageIcon>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<!-- Blazor's own script (blazor.web.js) ships in a package the SDK only adds when it sees
+		     .razor files at restore time. The Dockerfile restores from the project file alone, before
+		     the sources are copied in, so the image was published without the script: the dashboard
+		     prerendered but never went interactive, and the search page stayed blank (issue #92). -->
+		<RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
 	</PropertyGroup>
 
 	<ItemGroup>
+		<PackageReference Include="Azure.Search.Documents" Version="12.0.0" />
 		<PackageReference Include="Lucene.Net" Version="4.8.0-beta00017" />
 		<PackageReference Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00017" />
 		<PackageReference Include="Lucene.Net.Highlighter" Version="4.8.0-beta00017" />

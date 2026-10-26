@@ -28,13 +28,27 @@ public class IndexesController(
     /// Azure Search SDK expects and dropping <c>[EnableQuery]</c>, so it is left as-is: a
     /// listing is a survey rather than the definition a client edits and writes back, and the
     /// round-trip that issue #41 is about goes through the single-index routes.
+    /// <para>
+    /// Materialized into a queryable rather than returned as the repository's async stream:
+    /// <c>[EnableQuery]</c> does not recognise an <see cref="IAsyncEnumerable{T}"/> as a
+    /// collection, and applied <c>$select</c> to the stream as though it were a single index —
+    /// which threw, so <c>SearchIndexClient.GetIndexNamesAsync</c>, which sends
+    /// <c>$select=name</c>, failed against the emulator.
+    /// </para>
     /// </remarks>
     [HttpGet]
     [EnableQuery]
     [Route("indexes")]
-    public IAsyncEnumerable<SearchIndex> Get()
+    public async Task<IQueryable<SearchIndex>> Get()
     {
-        return searchIndexRepository.GetAll();
+        var indexes = new List<SearchIndex>();
+
+        await foreach (var index in searchIndexRepository.GetAll())
+        {
+            indexes.Add(index);
+        }
+
+        return indexes.AsQueryable();
     }
 
     /// <remarks>
