@@ -75,4 +75,36 @@ public class SearchRequest
     /// queries are answered.
     /// </remarks>
     public string? VectorFilterMode { get; set; }
+
+    /// <summary>
+    /// The index's semantic configuration a semantic query ranks with, or null for its default
+    /// (issue #109).
+    /// </summary>
+    public string? SemanticConfiguration { get; set; }
+
+    /// <summary>
+    /// Text to rerank against in place of <see cref="Search"/>.
+    /// </summary>
+    public string? SemanticQuery { get; set; }
+
+    /// <summary>
+    /// <c>none</c>, or <c>extractive</c> with options such as <c>extractive|count-3</c>.
+    /// </summary>
+    public string? Answers { get; set; }
+
+    /// <summary>
+    /// <c>none</c>, or <c>extractive</c> with options such as <c>extractive|highlight-false</c>.
+    /// </summary>
+    public string? Captions { get; set; }
+
+    /// <remarks>
+    /// Bound so it survives into <c>@search.nextPageParameters</c>, but otherwise unused: the
+    /// emulator's ranking never fails part-way or runs out of time.
+    /// </remarks>
+    public string? SemanticErrorHandling { get; set; }
+
+    /// <remarks>
+    /// Bound and unused, for the same reason as <see cref="SemanticErrorHandling"/>.
+    /// </remarks>
+    public int? SemanticMaxWaitInMilliseconds { get; set; }
 }

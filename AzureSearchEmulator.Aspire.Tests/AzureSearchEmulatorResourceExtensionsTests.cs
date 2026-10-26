@@ -154,4 +154,31 @@ public class AzureSearchEmulatorResourceExtensionsTests
         Assert.NotNull(mount);
         Assert.Equal(isReadOnly, mount.IsReadOnly);
     }
+
+    [Fact]
+    public async Task WithSemanticRanker_EnablesRankerAndCachesModelInVolume()
+    {
+        // Arrange
+        var builder = DistributedApplication.CreateBuilder();
+        var resourceBuilder = builder.AddAzureSearchEmulator("my-emulator");
+
+        // Act
+        resourceBuilder.WithSemanticRanker("my-models");
+
+        // Assert
+        Assert.True(resourceBuilder.Resource.TryGetAnnotationsOfType<ContainerMountAnnotation>(out var mountAnnotations));
+        var mount = Assert.Single(mountAnnotations, ma => ma.Target == "/app/models");
+        Assert.Equal("my-models", mount.Source);
+
+        // Publish rather than Run, for the reason given in AddAzureSearchEmulator_ShouldAddResourceToBuilder.
+        var executionConfiguration = await ExecutionConfigurationBuilder
+            .Create(resourceBuilder.Resource)
+            .WithEnvironmentVariablesConfig()
+            .BuildAsync(new DistributedApplicationExecutionContext(DistributedApplicationOperation.Publish),
+                NullLogger.Instance,
+                TestContext.Current.CancellationToken);
+
+        Assert.Contains(executionConfiguration.EnvironmentVariables,
+            kvp => kvp is { Key: "Emulator__SemanticRanker__Enabled", Value: "true" });
+    }
 }

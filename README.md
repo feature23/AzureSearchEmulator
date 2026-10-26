@@ -672,8 +672,39 @@ when segments merge.
   precomputed embeddings instead.
 * **Compression and quantization**, which are accepted in an index definition and ignored;
   the emulator stores vectors uncompressed, which can only make its results more exact.
-* **Semantic ranking** (`@search.rerankerScore`), which in Azure layers on top of the fused
-  result rather than participating in it.
+* **Semantic ranking as part of the fusion.** In Azure it layers on top of the fused result
+  rather than participating in it, and the emulator does the same; see
+  [Semantic ranking](#semantic-ranking).
+
+### Semantic ranking
+
+`queryType=semantic` is answered with the response a semantic query gets from Azure: results
+carry `@search.rerankerScore` (0–4) and, when requested, `@search.captions`, and the response
+carries `@search.answers`. `semanticConfiguration` (or the index's `defaultConfiguration`),
+`semanticQuery`, and the `count`, `threshold`, `highlight` and `maxcharlength` options of
+`answers` and `captions` are all honoured. As in Azure, the first 50 retrieved results are
+reranked; paging applies to the reranked order.
+
+By default the reranking is a word-overlap heuristic: deterministic, with nothing to download,
+and good enough for code that only needs the response shape. For an order driven by meaning,
+enable the model-backed ranker:
+
+```bash
+azsearchemu --Emulator:SemanticRanker:Enabled true
+# or Emulator__SemanticRanker__Enabled=true in the environment, e.g. for Docker
+```
+
+This downloads an open-weight cross-encoder,
+[`cross-encoder/ms-marco-MiniLM-L6-v2`](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2)
+(about 90 MB, Apache-2.0), on first start and loads it before the emulator accepts requests.
+It is cached in `Emulator:SemanticRanker:ModelDirectory` (default `models`, which is
+`/app/models` in Docker — mount a volume there to keep it). Another BERT-style cross-encoder can
+be used by setting `ModelUrl` (an ONNX export) and `VocabularyUrl` (its `vocab.txt`).
+
+Either way this is far smaller than Azure's ranker and English-only, so expect plausible
+rather than identical ordering and scores. `semanticErrorHandling` and
+`semanticMaxWaitInMilliseconds` are accepted and ignored, since the emulator never returns a
+partial semantic response.
 
 ### Complex type support
 

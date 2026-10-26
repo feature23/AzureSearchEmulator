@@ -47,14 +47,14 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
 
         _certDirectory = CreateThrowawayCertificate();
 
-        _container = new ContainerBuilder(image)
+        _container = ConfigureContainer(new ContainerBuilder(image)
             .WithPortBinding(_httpsPort, _httpsPort)
             .WithEnvironment("ASPNETCORE_URLS", $"https://+:{_httpsPort}")
             .WithEnvironment("ASPNETCORE_HTTPS_PORT", _httpsPort.ToString())
             .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Password", CertPassword)
             .WithEnvironment("ASPNETCORE_Kestrel__Certificates__Default__Path", "/https/aspnetapp.pfx")
             .WithBindMount(_certDirectory, "/https", AccessMode.ReadOnly)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(_httpsPort)) // NOTE: we cannot use HTTP wait strategy due to self-signed cert
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilExternalTcpPortIsAvailable(_httpsPort))) // NOTE: we cannot use HTTP wait strategy due to self-signed cert
             .Build();
 
         await image.CreateAsync();
@@ -64,6 +64,12 @@ public class EmulatorFactory : IAsyncLifetime, IAsyncDisposable
         var mappedPort = _container.GetMappedPublicPort(_httpsPort);
         Endpoint = new Uri($"https://localhost:{mappedPort}");
     }
+
+    /// <summary>
+    /// Adds settings of a derived factory's own to the container, such as enabling an opt-in
+    /// feature.
+    /// </summary>
+    protected virtual ContainerBuilder ConfigureContainer(ContainerBuilder builder) => builder;
 
     /// <summary>
     /// Gets a key credential for use with the Azure Search SDK (any key works for the emulator).

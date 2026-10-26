@@ -4,6 +4,7 @@ using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.SearchData;
+using AzureSearchEmulator.Semantic;
 using Lucene.Net.Analysis;
 using Lucene.Net.Index;
 using Lucene.Net.QueryParsers.Flexible.Standard;
@@ -20,9 +21,14 @@ namespace AzureSearchEmulator.Searching;
 /// that a caller with no interest in the feature — the unit tests build a searcher over a
 /// bare Lucene directory — need not supply a store for it.
 /// </param>
+/// <param name="semanticScorer">
+/// What semantic queries rerank with, defaulting to the heuristic that needs no model (issue
+/// #109). Optional for the same reason as <paramref name="synonymMapRepository"/>.
+/// </param>
 public class LuceneNetIndexSearcher(
     ILuceneIndexReaderFactory indexReaderFactory,
-    ISynonymMapRepository? synonymMapRepository = null) : IIndexSearcher
+    ISynonymMapRepository? synonymMapRepository = null,
+    ISemanticScorer? semanticScorer = null) : IIndexSearcher
 {
     private const string SearchScoreFunction = "search.score(";
 
@@ -59,6 +65,8 @@ public class LuceneNetIndexSearcher(
         // request is reported as the fault it is rather than as whatever the storage layer
         // happens to say about an index that may not have been written to yet (issue #46).
         VectorQuerySupport.Validate(index, request);
+
+        var semantic = SemanticRequest.Parse(index, request);
 
         var searcher = GetSearcher(index);
 
@@ -143,9 +151,15 @@ public class LuceneNetIndexSearcher(
             return response;
         }
 
-        var docs = searcher.Search(query, filter, hitsWanted, sort, true, true);
+        // A semantic query reranks the first 50 retrieved documents whatever page was asked for,
+        // so it retrieves all of them and pages afterwards.
+        var hitsRetrieved = semantic == null ? hitsWanted : Math.Max(hitsWanted, SemanticReranker.MaxRerankedResults);
 
-        for (var i = request.Skip; i < docs.ScoreDocs.Length; i++)
+        var docs = searcher.Search(query, filter, hitsRetrieved, sort, true, true);
+
+        var candidates = new List<SemanticCandidate>();
+
+        for (var i = semantic == null ? request.Skip : 0; i < docs.ScoreDocs.Length; i++)
         {
             var scoreDoc = docs.ScoreDocs[i];
 
@@ -161,7 +175,23 @@ public class LuceneNetIndexSearcher(
                 result["@search.highlights"] = JsonSerializer.SerializeToNode(highlights);
             }
 
-            response.Results.Add(result);
+            if (semantic == null)
+            {
+                response.Results.Add(result);
+            }
+            else
+            {
+                candidates.Add(new SemanticCandidate(result, ConvertSearchDoc(index, doc), scoreDoc.Score));
+            }
+        }
+
+        if (semantic != null)
+        {
+            var (results, answers) = new SemanticReranker(semanticScorer ?? new LexicalSemanticScorer())
+                .Rerank(index, semantic, candidates, request.Skip, request.Top ?? SearchRequest.DefaultTop);
+
+            response.Results = results.ToList();
+            response.Answers = answers;
         }
 
         if (request.Count)
