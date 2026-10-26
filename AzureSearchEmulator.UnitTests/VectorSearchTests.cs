@@ -409,7 +409,7 @@ public class VectorSearchTests : IDisposable
     /// A document merged on an unrelated field stays findable by vector search.
     /// </summary>
     /// <remarks>
-    /// The end-to-end half of the bug that <c>MergeDocument</c>'s doc-values rebuild fixes. The
+    /// The end-to-end half of the bug where a merge dropped the packed doc-values copy. The
     /// storage test in phase 1 asserts the packed copy survives; this asserts what that survival
     /// is <em>for</em>. Without it the document would keep retrieving correctly while silently
     /// dropping out of every vector query — the failure is invisible from the retrieval side,

@@ -5,6 +5,6 @@ namespace AzureSearchEmulator.Indexing;
 
 public class UploadIndexDocumentAction(JsonObject item) : UpsertIndexDocumentActionBase(item)
 {
-    protected override void IndexDocument(IndexingContext context, Term keyTerm, IEnumerable<IIndexableField> docFields)
-        => context.Writer.UpdateDocument(keyTerm, docFields);
+    protected override void IndexDocument(IndexingContext context, Term keyTerm)
+        => context.Writer.UpdateDocument(keyTerm, GetDocFields(context.Index, Item));
 }
