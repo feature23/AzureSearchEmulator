@@ -1,0 +1,631 @@
+@page "/search"
+@using System.Text.Json
+@using Azure
+@using Azure.Search.Documents.Models
+@using AzureSearchEmulator.Dashboard
+@using SdkSearchIndex = Azure.Search.Documents.Indexes.Models.SearchIndex
+@using SdkSearchField = Azure.Search.Documents.Indexes.Models.SearchField
+@using SdkFieldType = Azure.Search.Documents.Indexes.Models.SearchFieldDataType
+@* Not prerendered: every load queries the emulator through the SDK, and prerendering would run each
+   of those twice — once for the static pass and again when the circuit takes over. *@
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@inject EmulatorClientFactory Clients
+@inject NavigationManager Navigation
+
+<PageTitle>Search · Azure Search Emulator</PageTitle>
+
+<h1 class="visually-hidden">Search an index</h1>
+
+@if (_loadError is not null)
+{
+    <section class="panel is-unhealthy">
+        <h2>Could not list indexes</h2>
+        <p class="error-text">@_loadError</p>
+    </section>
+}
+else if (_indexNames is null)
+{
+    <section class="panel panel-loading" aria-busy="true">
+        <span class="spinner" aria-hidden="true"></span>
+        <p class="muted">Loading indexes…</p>
+    </section>
+}
+else if (_indexNames.Count == 0)
+{
+    <section class="panel empty-state">
+        <h2>No indexes yet</h2>
+        <p class="muted">
+            Create an index through the REST API or an Azure SDK client pointed at this emulator, and
+            it will be listed here to search.
+        </p>
+    </section>
+}
+else
+{
+    <form class="panel search-form" @onsubmit="SubmitAsync">
+        <div class="search-row">
+            <label class="field index-field">
+                <span>Index</span>
+                <select value="@_indexName" @onchange="IndexChangedAsync">
+                    @foreach (var name in _indexNames)
+                    {
+                        <option value="@name">@name</option>
+                    }
+                </select>
+            </label>
+            <label class="field grow">
+                <span>Search text</span>
+                @* oninput rather than the default onchange: pressing Enter submits the form, and the
+                   change event is not guaranteed to reach the circuit ahead of the submit. *@
+                <input type="search" @bind="_form.SearchText" @bind:event="oninput"
+                       placeholder="* matches every document" autocomplete="off" spellcheck="false" />
+            </label>
+            <button class="button button-primary" type="submit" disabled="@_searching">
+                @(_searching ? "Searching…" : "Search")
+            </button>
+        </div>
+
+        <details class="options">
+            <summary>Query options</summary>
+            <div class="options-grid">
+                <label class="field">
+                    <span>Query type</span>
+                    <select @bind="_form.QueryType">
+                        <option value="simple">Simple</option>
+                        <option value="full">Full Lucene</option>
+                        @if (_index?.SemanticConfigurations.Count > 0)
+                        {
+                            <option value="semantic">Semantic</option>
+                        }
+                    </select>
+                </label>
+                <label class="field">
+                    <span>Search mode</span>
+                    <select @bind="_form.SearchMode">
+                        <option value="any">Any term</option>
+                        <option value="all">All terms</option>
+                    </select>
+                </label>
+                @if (_form.IsSemantic)
+                {
+                    <label class="field">
+                        <span>Semantic configuration</span>
+                        <select @bind="_form.SemanticConfiguration">
+                            @foreach (var name in _index!.SemanticConfigurations)
+                            {
+                                <option value="@name">@name</option>
+                            }
+                        </select>
+                    </label>
+                }
+                @if (_index?.ScoringProfiles.Count > 0)
+                {
+                    <label class="field">
+                        <span>Scoring profile</span>
+                        <select @bind="_form.ScoringProfile">
+                            <option value="">(default)</option>
+                            @foreach (var name in _index.ScoringProfiles)
+                            {
+                                <option value="@name">@name</option>
+                            }
+                        </select>
+                    </label>
+                }
+                <label class="field span-2">
+                    <span>Filter <code>$filter</code></span>
+                    <input @bind="_form.Filter" placeholder="rating ge 4 and category eq 'Budget'" spellcheck="false" />
+                </label>
+                <label class="field">
+                    <span>Order by <code>$orderby</code></span>
+                    <input @bind="_form.OrderBy" placeholder="rating desc" spellcheck="false" />
+                </label>
+                <label class="field">
+                    <span>Select <code>$select</code></span>
+                    <input @bind="_form.Select" placeholder="All retrievable fields" spellcheck="false" />
+                </label>
+                <label class="field">
+                    <span>Search fields</span>
+                    <input @bind="_form.SearchFields" placeholder="All searchable fields" spellcheck="false" />
+                </label>
+                <label class="field">
+                    <span>Facets</span>
+                    <input @bind="_form.Facets" placeholder="category, rating,interval:1" spellcheck="false" />
+                </label>
+                <label class="field">
+                    <span>Highlight</span>
+                    <input @bind="_form.Highlight" placeholder="description" spellcheck="false" />
+                </label>
+                <label class="field">
+                    <span>Results per page <code>$top</code></span>
+                    <input type="number" min="0" max="1000" @bind="_form.Top" />
+                </label>
+                <label class="field checkbox-field">
+                    <input type="checkbox" @bind="_form.IncludeTotalCount" />
+                    <span>Include total count <code>$count</code></span>
+                </label>
+            </div>
+        </details>
+    </form>
+
+    @if (_exchange is not null || _error is not null)
+    {
+        <section class="panel results-panel" aria-busy="@_searching">
+            <div class="tabs" role="tablist">
+                <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Results)"
+                        @onclick="() => _tab = ResultsTab.Results">
+                    Results
+                    @if (_results is not null)
+                    {
+                        <span class="tab-count">@((_results.TotalCount ?? _results.Items.Count).ToString("N0"))</span>
+                    }
+                </button>
+                @if (_exchange is not null)
+                {
+                    <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Request)"
+                            @onclick="() => _tab = ResultsTab.Request">
+                        Request
+                    </button>
+                    <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Response)"
+                            @onclick="() => _tab = ResultsTab.Response">
+                        Response
+                        @if (_exchange.Response is { } response)
+                        {
+                            <span class="tab-count @(response.Status < 400 ? "is-healthy" : "is-unhealthy")">@response.Status</span>
+                        }
+                    </button>
+                }
+            </div>
+
+            <div class="tab-panel" role="tabpanel">
+                @switch (_tab)
+                {
+                    case ResultsTab.Request when _exchange is not null:
+                        <HttpExchangeView Exchange="_exchange" />
+                        break;
+                    case ResultsTab.Response when _exchange is not null:
+                        <HttpExchangeView Exchange="_exchange" ShowResponse="true" />
+                        break;
+                    default:
+                        @RenderResults()
+                        break;
+                }
+            </div>
+        </section>
+    }
+}
+
+@code {
+    private enum ResultsTab
+    {
+        Results,
+        Request,
+        Response
+    }
+
+    /// <summary>What the page needs to know about the selected index to offer its options.</summary>
+    private sealed record IndexDetails(
+        string Name,
+        string? KeyField,
+        string? TitleField,
+        IReadOnlyList<string> ScoringProfiles,
+        IReadOnlyList<string> SemanticConfigurations);
+
+    private sealed record ResultsView(
+        long? TotalCount,
+        IReadOnlyList<SearchResult<SearchDocument>> Items,
+        IDictionary<string, IList<FacetResult>> Facets,
+        IReadOnlyList<QueryAnswerResult> Answers,
+        int Skip);
+
+    [SupplyParameterFromQuery(Name = "index")]
+    public string? IndexQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? SearchQuery { get; set; }
+
+    private readonly SearchQueryForm _form = new();
+
+    private IReadOnlyList<string>? _indexNames;
+    private string? _loadError;
+    private string? _indexName;
+    private IndexDetails? _index;
+
+    private bool _searching;
+    private ResultsView? _results;
+    private string? _error;
+    private HttpExchange? _exchange;
+    private ResultsTab _tab;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var names = new List<string>();
+
+            await foreach (var name in Clients.CreateIndexClient().GetIndexNamesAsync())
+            {
+                names.Add(name);
+            }
+
+            names.Sort(StringComparer.OrdinalIgnoreCase);
+            _indexNames = names;
+        }
+        catch (Exception ex) when (ex is RequestFailedException or HttpRequestException or InvalidOperationException)
+        {
+            _loadError = ex.Message;
+            return;
+        }
+
+        if (_indexNames.Count == 0)
+        {
+            return;
+        }
+
+        _form.SearchText = SearchQuery ?? "";
+
+        var initial = _indexNames.FirstOrDefault(i => string.Equals(i, IndexQuery, StringComparison.OrdinalIgnoreCase))
+                      ?? _indexNames[0];
+
+        await SelectIndexAsync(initial);
+    }
+
+    private async Task IndexChangedAsync(ChangeEventArgs e)
+    {
+        if (e.Value is string name && name != _indexName)
+        {
+            await SelectIndexAsync(name);
+        }
+    }
+
+    /// <summary>
+    /// Switches to an index and searches it straight away, so choosing an index shows what is in it
+    /// without a second click.
+    /// </summary>
+    private async Task SelectIndexAsync(string name)
+    {
+        _indexName = name;
+        _index = null;
+        _results = null;
+        _exchange = null;
+        _error = null;
+
+        try
+        {
+            var response = await Clients.CreateIndexClient().GetIndexAsync(name);
+            _index = Describe(response.Value);
+        }
+        catch (RequestFailedException ex)
+        {
+            _error = ex.Message;
+            return;
+        }
+
+        // Options naming things on the previous index would fail against this one.
+        _form.ScoringProfile = "";
+        _form.SemanticConfiguration = _index.SemanticConfigurations.FirstOrDefault() ?? "";
+
+        if (_form.IsSemantic && _index.SemanticConfigurations.Count == 0)
+        {
+            _form.QueryType = "simple";
+        }
+
+        _form.Skip = 0;
+        await RunSearchAsync();
+    }
+
+    private async Task SubmitAsync()
+    {
+        _form.Skip = 0;
+        await RunSearchAsync();
+    }
+
+    private async Task PageAsync(int direction)
+    {
+        _form.Skip = Math.Max(0, _form.Skip + direction * Math.Max(1, _form.Top));
+        await RunSearchAsync();
+    }
+
+    private async Task RunSearchAsync()
+    {
+        if (_indexName is null || _searching)
+        {
+            return;
+        }
+
+        _searching = true;
+        _error = null;
+
+        var recorder = new HttpExchangeRecorder();
+        var client = Clients.CreateSearchClient(_indexName, recorder);
+        var searchText = string.IsNullOrWhiteSpace(_form.SearchText) ? "*" : _form.SearchText;
+
+        try
+        {
+            var response = await client.SearchAsync<SearchDocument>(searchText, _form.ToSearchOptions());
+            var results = response.Value;
+
+            // Only the first page, which arrived with the response. Enumerating further would have
+            // the SDK follow continuation links with requests of its own, and the page shows one
+            // request at a time.
+            IReadOnlyList<SearchResult<SearchDocument>> items = [];
+
+            await foreach (var page in results.GetResultsAsync().AsPages())
+            {
+                items = page.Values;
+                break;
+            }
+
+            _results = new ResultsView(
+                results.TotalCount,
+                items,
+                results.Facets ?? new Dictionary<string, IList<FacetResult>>(),
+                results.SemanticSearch?.Answers ?? [],
+                _form.Skip);
+
+            UpdateAddress();
+        }
+        catch (RequestFailedException ex)
+        {
+            _results = null;
+            _error = ErrorMessage(recorder.LastExchange) ?? ex.Message;
+        }
+        catch (HttpRequestException ex)
+        {
+            _results = null;
+            _error = ex.Message;
+        }
+        finally
+        {
+            _exchange = recorder.LastExchange;
+            _searching = false;
+        }
+    }
+
+    /// <summary>
+    /// Keeps the index and query in the address bar, so a reload or a copied link comes back to the
+    /// same search.
+    /// </summary>
+    private void UpdateAddress()
+    {
+        var address = Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["index"] = _indexName,
+            ["q"] = string.IsNullOrWhiteSpace(_form.SearchText) ? null : _form.SearchText
+        });
+
+        if (address != Navigation.Uri)
+        {
+            Navigation.NavigateTo(address, replace: true);
+        }
+    }
+
+    /// <summary>
+    /// The message from the emulator's error envelope. The SDK's own exception message appends the
+    /// status, headers and raw content, all of which the Response tab already shows properly.
+    /// </summary>
+    private static string? ErrorMessage(HttpExchange? exchange)
+    {
+        if (exchange?.Response?.Body is not { Length: > 0 } body)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+
+            return document.RootElement.TryGetProperty("error", out var error)
+                   && error.TryGetProperty("message", out var message)
+                   && message.ValueKind == JsonValueKind.String
+                ? message.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static IndexDetails Describe(SdkSearchIndex index)
+    {
+        var key = index.Fields.FirstOrDefault(i => i.IsKey == true)?.Name;
+        var semanticTitle = index.SemanticSearch?.Configurations.FirstOrDefault()?.PrioritizedFields?.TitleField?.FieldName;
+
+        return new IndexDetails(
+            index.Name,
+            key,
+            semanticTitle ?? FindTitleField(index.Fields, key),
+            index.ScoringProfiles.Select(i => i.Name).ToList(),
+            index.SemanticSearch?.Configurations.Select(i => i.Name).ToList() ?? []);
+    }
+
+    /// <summary>
+    /// A string field that looks like a title or name, to head each result card with when no semantic
+    /// configuration names one. Without either, the card is headed with the document key.
+    /// </summary>
+    private static string? FindTitleField(IList<SdkSearchField> fields, string? key)
+    {
+        var candidates = fields
+            .Where(i => i.Type == SdkFieldType.String && i.Name != key && i.IsHidden != true)
+            .Select(i => i.Name)
+            .ToList();
+
+        return candidates.FirstOrDefault(i => i.Contains("title", StringComparison.OrdinalIgnoreCase))
+               ?? candidates.FirstOrDefault(i => i.Contains("name", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private RenderFragment RenderResults() => __builder =>
+    {
+        if (_error is not null)
+        {
+            <div class="callout is-unhealthy" role="alert">
+                <p class="callout-title">The query failed</p>
+                <p class="error-text">@_error</p>
+                @if (_exchange?.Response is not null)
+                {
+                    <p class="muted">The Response tab has the full error the emulator returned.</p>
+                }
+            </div>
+            return;
+        }
+
+        if (_results is null)
+        {
+            return;
+        }
+
+        var results = _results;
+        var first = results.Skip + 1;
+        var last = results.Skip + results.Items.Count;
+
+        <p class="results-summary">
+            @if (results.Items.Count == 0)
+            {
+                <span>No documents matched.</span>
+            }
+            else
+            {
+                <span>Showing <strong>@first–@last</strong></span>
+                @if (results.TotalCount is { } total)
+                {
+                    <span> of <strong>@total.ToString("N0")</strong></span>
+                }
+            }
+            @if (_exchange is not null)
+            {
+                <span class="muted"> · @_exchange.Duration.TotalMilliseconds.ToString("0") ms</span>
+            }
+        </p>
+
+        @foreach (var answer in results.Answers)
+        {
+            <div class="answer">
+                <p class="eyebrow">Semantic answer</p>
+                <p>@HighlightMarkup.Render(answer.Highlights ?? answer.Text ?? "")</p>
+            </div>
+        }
+
+        @if (results.Facets.Count > 0)
+        {
+            <div class="facets">
+                @foreach (var (field, values) in results.Facets)
+                {
+                    <div class="facet">
+                        <p class="facet-name">@field</p>
+                        <ul class="chips">
+                            @foreach (var facet in values)
+                            {
+                                <li class="chip">
+                                    <span>@FacetLabel(facet)</span>
+                                    <span class="chip-count">@facet.Count</span>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+        }
+
+        <ol class="results" start="@first">
+            @foreach (var result in results.Items)
+            {
+                @RenderResult(result)
+            }
+        </ol>
+
+        @if (results.Skip > 0 || HasNextPage(results))
+        {
+            <div class="pager">
+                <button class="button" type="button" disabled="@(_searching || results.Skip == 0)"
+                        @onclick="() => PageAsync(-1)">← Previous</button>
+                <button class="button" type="button" disabled="@(_searching || !HasNextPage(results))"
+                        @onclick="() => PageAsync(1)">Next →</button>
+            </div>
+        }
+    };
+
+    private RenderFragment RenderResult(SearchResult<SearchDocument> result) => __builder =>
+    {
+        var document = result.Document;
+        var key = _index?.KeyField is { } keyField && document.TryGetValue(keyField, out var keyValue)
+            ? DocumentValueFormatter.Format(keyValue)
+            : null;
+        var title = _index?.TitleField is { } titleField && document.TryGetValue(titleField, out var titleValue) && titleValue is string s
+            ? s
+            : null;
+
+        <li class="result">
+            <div class="result-head">
+                <div class="result-title">
+                    <p class="result-heading">@(title ?? key ?? "(no key)")</p>
+                    @if (title is not null && key is not null)
+                    {
+                        <code class="result-key" title="@_index!.KeyField">@key</code>
+                    }
+                </div>
+                <div class="scores">
+                    @if (result.SemanticSearch?.RerankerScore is { } reranker)
+                    {
+                        <span class="score" title="@@search.rerankerScore">reranker @reranker.ToString("0.###")</span>
+                    }
+                    @if (result.Score is { } score)
+                    {
+                        <span class="score" title="@@search.score">score @score.ToString("0.####")</span>
+                    }
+                </div>
+            </div>
+
+            @if (result.SemanticSearch?.Captions is { Count: > 0 } captions)
+            {
+                @foreach (var caption in captions)
+                {
+                    <p class="caption">@HighlightMarkup.Render(caption.Highlights ?? caption.Text ?? "")</p>
+                }
+            }
+
+            @if (result.Highlights is { Count: > 0 } highlights)
+            {
+                <dl class="highlights">
+                    @foreach (var (field, fragments) in highlights)
+                    {
+                        <dt>@field</dt>
+                        @foreach (var fragment in fragments)
+                        {
+                            <dd>@HighlightMarkup.Render(fragment)</dd>
+                        }
+                    }
+                </dl>
+            }
+
+            <dl class="fields">
+                @foreach (var (name, value) in document)
+                {
+                    // Both are already in the card's heading.
+                    if ((name == _index?.TitleField && title is not null) || (name == _index?.KeyField && key is not null))
+                    {
+                        continue;
+                    }
+
+                    <dt>@name</dt>
+                    <dd class="@(value is null ? "is-null" : null)">@DocumentValueFormatter.Format(value)</dd>
+                }
+            </dl>
+        </li>
+    };
+
+    private bool HasNextPage(ResultsView results) =>
+        results.TotalCount is { } total
+            ? results.Skip + results.Items.Count < total
+            : results.Items.Count > 0 && results.Items.Count == _form.Top;
+
+    /// <remarks>
+    /// Range buckets are open at the ends: the first has no lower bound and the last no upper one.
+    /// </remarks>
+    private static string FacetLabel(FacetResult facet) => facet switch
+    {
+        { Value: { } value } => DocumentValueFormatter.Format(value),
+        { From: null, To: { } to } => $"< {DocumentValueFormatter.Format(to)}",
+        { From: { } from, To: null } => $"≥ {DocumentValueFormatter.Format(from)}",
+        _ => $"{DocumentValueFormatter.Format(facet.From)} – {DocumentValueFormatter.Format(facet.To)}"
+    };
+}

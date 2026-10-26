@@ -1,0 +1,50 @@
+@using AzureSearchEmulator.Dashboard
+
+@* One side of a recorded SDK round trip, laid out as the HTTP message it was (issue #92). *@
+@if (ShowResponse)
+{
+    @if (Exchange.Response is { } response)
+    {
+        <div class="http-head">
+            <span class="http-status @StatusClass(response.Status)">@response.Status @response.ReasonPhrase</span>
+            <span class="muted">@FormatDuration(Exchange.Duration)</span>
+        </div>
+        <Headers Items="response.Headers" />
+        @if (!string.IsNullOrEmpty(response.Body))
+        {
+            <JsonView Json="@response.Body" />
+        }
+        else
+        {
+            <p class="muted">No response body.</p>
+        }
+    }
+    else
+    {
+        <p class="muted">No response was received.</p>
+    }
+}
+else
+{
+    <div class="http-head">
+        <span class="http-method">@Exchange.Method</span>
+        <code class="http-url">@Exchange.PathAndQuery</code>
+    </div>
+    <Headers Items="Exchange.RequestHeaders" />
+    @if (!string.IsNullOrEmpty(Exchange.RequestBody))
+    {
+        <JsonView Json="@Exchange.RequestBody" />
+    }
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public HttpExchange Exchange { get; set; } = null!;
+
+    [Parameter]
+    public bool ShowResponse { get; set; }
+
+    private static string StatusClass(int status) => status < 400 ? "is-healthy" : "is-unhealthy";
+
+    private static string FormatDuration(TimeSpan duration) => $"{duration.TotalMilliseconds:0} ms";
+}
