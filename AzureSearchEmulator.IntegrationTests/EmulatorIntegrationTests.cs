@@ -65,6 +65,93 @@ public class EmulatorIntegrationTests(EmulatorFactory factory)
         }
     }
 
+    /// <remarks>
+    /// The listing used to go through OData's serializer, which wrote text weights as an array of
+    /// empty objects the SDK could not read and left out semantic configurations (found while
+    /// building the dashboard's index pages, issue #91).
+    /// </remarks>
+    [Fact]
+    public async Task GetIndexes_ReturnsFullDefinitions()
+    {
+        const string indexName = "test-get-indexes-full";
+        var indexClient = factory.CreateSearchIndexClient();
+
+        var index = new SearchIndex(indexName)
+        {
+            Fields =
+            {
+                new SimpleField("id", SearchFieldDataType.String) { IsKey = true },
+                new SearchableField("name")
+            },
+            ScoringProfiles =
+            {
+                new ScoringProfile("boost") { TextWeights = new TextWeights(new Dictionary<string, double> { ["name"] = 2 }) }
+            },
+            SemanticSearch = new SemanticSearch
+            {
+                Configurations =
+                {
+                    new SemanticConfiguration("default", new SemanticPrioritizedFields { TitleField = new SemanticField("name") })
+                }
+            }
+        };
+
+        await indexClient.CreateIndexAsync(index, TestContext.Current.CancellationToken);
+
+        try
+        {
+            SearchIndex? listed = null;
+
+            await foreach (var i in indexClient.GetIndexesAsync(TestContext.Current.CancellationToken))
+            {
+                if (i.Name == indexName)
+                {
+                    listed = i;
+                }
+            }
+
+            Assert.NotNull(listed);
+            Assert.Equal(2, listed.Fields.Count);
+            Assert.Equal(2, listed.ScoringProfiles.Single().TextWeights.Weights["name"]);
+            Assert.Equal("default", listed.SemanticSearch?.Configurations.Single().Name);
+        }
+        finally
+        {
+            await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+        }
+    }
+
+    /// <remarks>
+    /// The dashboard's index pages show these, so the SDK has to be able to read them (issue #91).
+    /// </remarks>
+    [Fact]
+    public async Task GetIndexStatistics_ReportsDocumentsAndStorage()
+    {
+        const string indexName = "test-index-statistics";
+        var indexClient = factory.CreateSearchIndexClient();
+        await CreateIndexAsync(indexClient, indexName);
+
+        try
+        {
+            var empty = (await indexClient.GetIndexStatisticsAsync(indexName, TestContext.Current.CancellationToken)).Value;
+
+            Assert.Equal(0, empty.DocumentCount);
+
+            var searchClient = factory.CreateSearchClient(indexName);
+            await UploadDocumentsAsync(searchClient);
+
+            var statistics = (await indexClient.GetIndexStatisticsAsync(indexName, TestContext.Current.CancellationToken)).Value;
+
+            Assert.Equal(CreateProductDocuments().Count, statistics.DocumentCount);
+            Assert.True(statistics.StorageSize > empty.StorageSize);
+            Assert.Equal(0, statistics.VectorIndexSize);
+        }
+        finally
+        {
+            await indexClient.DeleteIndexAsync(indexName, TestContext.Current.CancellationToken);
+        }
+    }
+
     [Fact]
     public async Task UploadDocuments_ShouldSucceed()
     {

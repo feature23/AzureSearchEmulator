@@ -1,0 +1,642 @@
+@page "/browse/{Name}"
+@using Azure
+@using Azure.Search.Documents
+@using Azure.Search.Documents.Models
+@using AzureSearchEmulator.Dashboard
+@using Azure.Search.Documents.Indexes.Models
+@using SdkSearchIndex = Azure.Search.Documents.Indexes.Models.SearchIndex
+@* Not prerendered, for the same reason as the search page: every load goes through the SDK. *@
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@inject EmulatorClientFactory Clients
+@inject NavigationManager Navigation
+
+<PageTitle>@Name · Indexes · Azure Search Emulator</PageTitle>
+
+<p class="breadcrumb"><a class="link" href="browse">← All indexes</a></p>
+
+@if (_loadError is not null)
+{
+    <section class="panel is-unhealthy">
+        <h1 class="panel-title">@Name</h1>
+        <p class="error-text">@_loadError</p>
+    </section>
+}
+else if (_index is null)
+{
+    <section class="panel panel-loading" aria-busy="true">
+        <span class="spinner" aria-hidden="true"></span>
+        <p class="muted">Loading @Name…</p>
+    </section>
+}
+else
+{
+    <section class="panel">
+        <div class="panel-head">
+            <div>
+                <h1 class="panel-title">@_index.Name</h1>
+                <p class="muted">
+                    @_index.Fields.Count top-level @(_index.Fields.Count == 1 ? "field" : "fields")
+                    @if (_keyField is not null)
+                    {
+                        <span> · key <code>@_keyField</code></span>
+                    }
+                    @if ((_total ?? _statistics?.DocumentCount) is { } total)
+                    {
+                        <span> · @total.ToString("N0") @(total == 1 ? "document" : "documents")</span>
+                    }
+                    @if (_statistics is { } statistics)
+                    {
+                        <span title="@statistics.StorageSize.ToString("N0") bytes"> · @ByteSize.Format(statistics.StorageSize) on disk</span>
+                    }
+                </p>
+            </div>
+            <a class="button" href="search?index=@Uri.EscapeDataString(_index.Name)">Search</a>
+        </div>
+
+        <div class="tabs" role="tablist">
+            <button type="button" role="tab" class="tab" aria-selected="@(_tab == DetailsTab.Fields ? "true" : "false")"
+                    @onclick="() => SelectTabAsync(DetailsTab.Fields)">
+                Fields <span class="tab-count">@_fields.Count</span>
+            </button>
+            <button type="button" role="tab" class="tab" aria-selected="@(_tab == DetailsTab.Documents ? "true" : "false")"
+                    @onclick="() => SelectTabAsync(DetailsTab.Documents)">
+                Documents
+            </button>
+            <button type="button" role="tab" class="tab" aria-selected="@(_tab == DetailsTab.Definition ? "true" : "false")"
+                    @onclick="() => SelectTabAsync(DetailsTab.Definition)">
+                Definition
+            </button>
+        </div>
+
+        <div class="tab-panel" role="tabpanel">
+            @switch (_tab)
+            {
+                case DetailsTab.Documents:
+                    @RenderDocuments()
+                    break;
+                case DetailsTab.Definition:
+                    @if (_definitionJson is not null)
+                    {
+                        <p class="muted">The definition as the emulator returns it to <code>GET /indexes/@_index.Name</code>.</p>
+                        <JsonView Json="@_definitionJson" />
+                    }
+                    break;
+                default:
+                    @RenderFields()
+                    break;
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private enum DetailsTab
+    {
+        Fields,
+        Documents,
+        Definition
+    }
+
+    [Parameter]
+    public string Name { get; set; } = "";
+
+    [SupplyParameterFromQuery(Name = "tab")]
+    public string? TabQuery { get; set; }
+
+    /// <summary>The 1-based position of the document being shown.</summary>
+    [SupplyParameterFromQuery(Name = "doc")]
+    public int? DocumentQuery { get; set; }
+
+    private string? _loadedName;
+    private string? _loadError;
+    private SdkSearchIndex? _index;
+    private IReadOnlyList<IndexFieldRow> _fields = [];
+    private string? _keyField;
+    private bool _keySortable;
+    private string? _definitionJson;
+    private SearchIndexStatistics? _statistics;
+    private DetailsTab _tab;
+
+    // Documents tab. _position is null while showing a document looked up by key rather than paged to.
+    private bool _documentsLoaded;
+    private bool _loadingDocument;
+    private long? _total;
+    private int? _position;
+    private SearchDocument? _document;
+    private string? _documentJson;
+    private string? _documentError;
+    private int _jumpTo = 1;
+    private string _lookupKey = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Query parameters change under the page whenever it updates its own address, which should
+        // not reload anything. Only following a link to another index does.
+        if (Name == _loadedName)
+        {
+            return;
+        }
+
+        _loadedName = Name;
+        _loadError = null;
+        _index = null;
+        _documentsLoaded = false;
+        _total = null;
+        _statistics = null;
+        _document = null;
+        _documentJson = null;
+        _documentError = null;
+
+        var recorder = new HttpExchangeRecorder();
+
+        try
+        {
+            _index = (await Clients.CreateIndexClient(recorder).GetIndexAsync(Name)).Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            _loadError = $"There is no index or alias named '{Name}'.";
+            return;
+        }
+        catch (Exception ex) when (ex is RequestFailedException or HttpRequestException or InvalidOperationException)
+        {
+            _loadError = ex.Message;
+            return;
+        }
+
+        _fields = IndexSchema.Flatten(_index.Fields);
+        _keyField = IndexSchema.KeyField(_index);
+        _keySortable = IndexSchema.IsKeySortable(_index);
+        _definitionJson = recorder.LastExchange?.Response?.Body;
+        _statistics = await GetStatisticsAsync();
+
+        _tab = TabQuery?.ToLowerInvariant() switch
+        {
+            "documents" => DetailsTab.Documents,
+            "definition" => DetailsTab.Definition,
+            _ => DetailsTab.Fields
+        };
+
+        if (_tab == DetailsTab.Documents || DocumentQuery is not null)
+        {
+            _tab = DetailsTab.Documents;
+            await ShowDocumentAtAsync(Math.Max(0, (DocumentQuery ?? 1) - 1));
+        }
+    }
+
+    /// <remarks>
+    /// The page is still useful without them, so a failure only leaves the size out.
+    /// </remarks>
+    private async Task<SearchIndexStatistics?> GetStatisticsAsync()
+    {
+        try
+        {
+            return (await Clients.CreateIndexClient().GetIndexStatisticsAsync(_index!.Name)).Value;
+        }
+        catch (Exception ex) when (ex is RequestFailedException or HttpRequestException)
+        {
+            return null;
+        }
+    }
+
+    private async Task SelectTabAsync(DetailsTab tab)
+    {
+        _tab = tab;
+
+        if (tab == DetailsTab.Documents && !_documentsLoaded)
+        {
+            await ShowDocumentAtAsync(0);
+        }
+
+        UpdateAddress();
+    }
+
+    /// <summary>
+    /// Fetches the document at a 0-based position with a match-all search for a single result, which
+    /// is the only way the API offers to walk an index's documents.
+    /// </summary>
+    private async Task ShowDocumentAtAsync(int position)
+    {
+        if (_index is null || _loadingDocument)
+        {
+            return;
+        }
+
+        _loadingDocument = true;
+        _documentError = null;
+
+        var recorder = new HttpExchangeRecorder();
+
+        try
+        {
+            var page = await FetchAtAsync(position, recorder);
+
+            // A position past the end, from an edited address or documents deleted since, lands on
+            // the last document rather than on nothing.
+            if (page.Document is null && page.Total is > 0)
+            {
+                position = (int)Math.Min(page.Total.Value - 1, int.MaxValue);
+                page = await FetchAtAsync(position, recorder);
+            }
+
+            _total = page.Total;
+            _position = page.Document is null ? null : position;
+            _document = page.Document;
+            _documentJson = page.Json;
+            _jumpTo = position + 1;
+        }
+        catch (RequestFailedException ex)
+        {
+            _documentError = ErrorEnvelope.Message(recorder.LastExchange) ?? ex.Message;
+        }
+        catch (HttpRequestException ex)
+        {
+            _documentError = ex.Message;
+        }
+        finally
+        {
+            _documentsLoaded = true;
+            _loadingDocument = false;
+        }
+
+        UpdateAddress();
+    }
+
+    private async Task<(SearchDocument? Document, string? Json, long? Total)> FetchAtAsync(int position, HttpExchangeRecorder recorder)
+    {
+        var options = new SearchOptions
+        {
+            Size = 1,
+            Skip = position,
+            IncludeTotalCount = true
+        };
+
+        if (_keySortable)
+        {
+            options.OrderBy.Add($"{_keyField} asc");
+        }
+
+        var response = await Clients.CreateSearchClient(_index!.Name, recorder).SearchAsync<SearchDocument>("*", options);
+
+        // Only the page that arrived with the response; enumerating further would follow
+        // continuation links with requests of their own.
+        SearchDocument? document = null;
+
+        await foreach (var page in response.Value.GetResultsAsync().AsPages())
+        {
+            document = page.Values.FirstOrDefault()?.Document;
+            break;
+        }
+
+        return (document, DocumentJson.Extract(recorder.LastExchange?.Response?.Body), response.Value.TotalCount);
+    }
+
+    private async Task LookupAsync()
+    {
+        var key = _lookupKey.Trim();
+
+        if (_index is null || key.Length == 0 || _loadingDocument)
+        {
+            return;
+        }
+
+        _loadingDocument = true;
+        _documentError = null;
+
+        var recorder = new HttpExchangeRecorder();
+
+        try
+        {
+            _document = (await Clients.CreateSearchClient(_index.Name, recorder).GetDocumentAsync<SearchDocument>(key)).Value;
+            _documentJson = DocumentJson.Extract(recorder.LastExchange?.Response?.Body);
+            _position = null;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            _documentError = $"No document has the key '{key}'.";
+        }
+        catch (RequestFailedException ex)
+        {
+            _documentError = ErrorEnvelope.Message(recorder.LastExchange) ?? ex.Message;
+        }
+        catch (HttpRequestException ex)
+        {
+            _documentError = ex.Message;
+        }
+        finally
+        {
+            _loadingDocument = false;
+        }
+
+        UpdateAddress();
+    }
+
+    private async Task JumpAsync()
+    {
+        if (_total is { } total && total > 0)
+        {
+            await ShowDocumentAtAsync((int)Math.Clamp(_jumpTo - 1L, 0, Math.Min(total - 1, int.MaxValue)));
+        }
+    }
+
+    /// <summary>
+    /// Keeps the tab and document position in the address bar, so a reload or a copied link comes
+    /// back to the same document.
+    /// </summary>
+    private void UpdateAddress()
+    {
+        var documents = _tab == DetailsTab.Documents;
+
+        var address = Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["tab"] = _tab == DetailsTab.Fields ? null : _tab.ToString().ToLowerInvariant(),
+            ["doc"] = documents && _position is { } position ? position + 1 : null
+        });
+
+        if (address != Navigation.Uri)
+        {
+            Navigation.NavigateTo(address, replace: true);
+        }
+    }
+
+    private RenderFragment RenderFields() => __builder =>
+    {
+        <div class="table-scroll">
+            <table class="schema">
+                <thead>
+                    <tr>
+                        <th scope="col">Field</th>
+                        <th scope="col">Type</th>
+                        <th scope="col" title="Retrievable">Retr.</th>
+                        <th scope="col" title="Searchable">Search</th>
+                        <th scope="col" title="Filterable">Filter</th>
+                        <th scope="col" title="Sortable">Sort</th>
+                        <th scope="col" title="Facetable">Facet</th>
+                        <th scope="col">Analyzer / vector</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var field in _fields)
+                    {
+                        <tr class="@(field.IsComplex ? "is-complex" : null)">
+                            <th scope="row" style="padding-left: @(10 + field.Depth * 18)px">
+                                <code>@field.Path</code>
+                                @if (field.IsKey)
+                                {
+                                    <span class="key-badge">key</span>
+                                }
+                            </th>
+                            <td><code class="muted">@field.Type</code></td>
+                            @if (field.IsComplex)
+                            {
+                                @* Complex fields carry no attributes of their own; their subfields do. *@
+                                <td colspan="6"></td>
+                            }
+                            else
+                            {
+                                <td>@Flag(field.Retrievable)</td>
+                                <td>@Flag(field.Searchable)</td>
+                                <td>@Flag(field.Filterable)</td>
+                                <td>@Flag(field.Sortable)</td>
+                                <td>@Flag(field.Facetable)</td>
+                                <td class="muted">
+                                    @if (field.Dimensions is { } dimensions)
+                                    {
+                                        <span>@dimensions dimensions</span>
+                                        @if (field.VectorProfile is { } profile)
+                                        {
+                                            <span> · <code>@profile</code></span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <code>@field.Analyzer</code>
+                                    }
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        <p class="muted">✓ on · blank off · – not set in the definition</p>
+
+        @if (_index!.ScoringProfiles.Count > 0)
+        {
+            <h3>Scoring profiles</h3>
+            <dl class="config">
+                @foreach (var profile in _index.ScoringProfiles)
+                {
+                    <dt>
+                        <code>@profile.Name</code>
+                        @if (profile.Name == _index.DefaultScoringProfile)
+                        {
+                            <span class="key-badge">default</span>
+                        }
+                    </dt>
+                    <dd>@DescribeScoringProfile(profile)</dd>
+                }
+            </dl>
+        }
+
+        @if (_index.Suggesters.Count > 0)
+        {
+            <h3>Suggesters</h3>
+            <dl class="config">
+                @foreach (var suggester in _index.Suggesters)
+                {
+                    <dt><code>@suggester.Name</code></dt>
+                    <dd>@string.Join(", ", suggester.SourceFields)</dd>
+                }
+            </dl>
+        }
+
+        @if (_index.SemanticSearch?.Configurations is { Count: > 0 } semantic)
+        {
+            <h3>Semantic configurations</h3>
+            <dl class="config">
+                @foreach (var configuration in semantic)
+                {
+                    var fields = configuration.PrioritizedFields;
+
+                    <dt>
+                        <code>@configuration.Name</code>
+                        @if (configuration.Name == _index.SemanticSearch.DefaultConfigurationName)
+                        {
+                            <span class="key-badge">default</span>
+                        }
+                    </dt>
+                    <dd>
+                        @DescribeParts(
+                            ("title", fields.TitleField?.FieldName),
+                            ("content", JoinFields(fields.ContentFields.Select(i => i.FieldName))),
+                            ("keywords", JoinFields(fields.KeywordsFields.Select(i => i.FieldName))))
+                    </dd>
+                }
+            </dl>
+        }
+
+        @if (_index.VectorSearch?.Profiles is { Count: > 0 } vectorProfiles)
+        {
+            <h3>Vector profiles</h3>
+            <dl class="config">
+                @foreach (var profile in vectorProfiles)
+                {
+                    <dt><code>@profile.Name</code></dt>
+                    <dd>@DescribeParts(("algorithm", profile.AlgorithmConfigurationName), ("vectorizer", profile.VectorizerName))</dd>
+                }
+            </dl>
+        }
+
+        @if (_index.CorsOptions?.AllowedOrigins is { Count: > 0 } origins)
+        {
+            <h3>CORS</h3>
+            <dl class="config">
+                <dt>Allowed origins</dt>
+                <dd>@string.Join(", ", origins)</dd>
+            </dl>
+        }
+    };
+
+    private RenderFragment RenderDocuments() => __builder =>
+    {
+        var total = _total ?? 0;
+
+        <div class="doc-toolbar">
+            <div class="pager">
+                <button class="button" type="button" disabled="@(_loadingDocument || _position is null or 0)"
+                        @onclick="() => ShowDocumentAtAsync(0)" title="First document">«</button>
+                <button class="button" type="button" disabled="@(_loadingDocument || _position is null or 0)"
+                        @onclick="() => ShowDocumentAtAsync(_position!.Value - 1)">← Previous</button>
+                <button class="button" type="button" disabled="@(_loadingDocument || _position is null || _position + 1 >= total)"
+                        @onclick="() => ShowDocumentAtAsync(_position!.Value + 1)">Next →</button>
+                <button class="button" type="button" disabled="@(_loadingDocument || _position is null || _position + 1 >= total)"
+                        @onclick="() => ShowDocumentAtAsync((int)Math.Min(total - 1, int.MaxValue))" title="Last document">»</button>
+            </div>
+
+            <form class="inline-form" @onsubmit="JumpAsync">
+                <label class="field">
+                    <span>Document</span>
+                    <input type="number" min="1" max="@total" @bind="_jumpTo" disabled="@(total == 0)" />
+                </label>
+                <span class="muted">of @total.ToString("N0")</span>
+                <button class="button" type="submit" disabled="@(_loadingDocument || total == 0)">Go</button>
+            </form>
+
+            @if (_keyField is not null)
+            {
+                <form class="inline-form" @onsubmit="LookupAsync">
+                    <label class="field">
+                        <span>Look up by <code>@_keyField</code></span>
+                        @* oninput so that Enter submits the value just typed; see the search page. *@
+                        <input @bind="_lookupKey" @bind:event="oninput" placeholder="Document key" spellcheck="false" autocomplete="off" />
+                    </label>
+                    <button class="button" type="submit" disabled="@(_loadingDocument || string.IsNullOrWhiteSpace(_lookupKey))">Find</button>
+                </form>
+            }
+        </div>
+
+        @if (_documentError is not null)
+        {
+            <div class="callout is-unhealthy" role="alert">
+                <p class="error-text">@_documentError</p>
+            </div>
+        }
+
+        @if (!_documentsLoaded)
+        {
+            <div class="panel-loading">
+                <span class="spinner" aria-hidden="true"></span>
+                <p class="muted">Loading documents…</p>
+            </div>
+        }
+        else if (total == 0 && _document is null)
+        {
+            <p class="muted">This index has no documents.</p>
+        }
+        else if (_document is not null)
+        {
+            var key = _keyField is not null && _document.TryGetValue(_keyField, out var keyValue)
+                ? DocumentValueFormatter.Format(keyValue)
+                : null;
+
+            <article class="result document @(_loadingDocument ? "is-busy" : null)">
+                <div class="result-head">
+                    <div class="result-title">
+                        <p class="result-heading">@(key ?? "(no key)")</p>
+                    </div>
+                    <span class="muted">
+                        @if (_position is { } position)
+                        {
+                            <span>Document @((position + 1).ToString("N0")) of @total.ToString("N0")</span>
+                            @if (_keySortable)
+                            {
+                                <span> · in key order</span>
+                            }
+                        }
+                        else
+                        {
+                            <span>Looked up by key</span>
+                        }
+                    </span>
+                </div>
+
+                <dl class="fields fields-full">
+                    @foreach (var (name, value) in _document)
+                    {
+                        <dt>@name</dt>
+                        <dd class="@(value is null ? "is-null" : null)">@DocumentValueFormatter.Format(value)</dd>
+                    }
+                </dl>
+
+                @if (_documentJson is not null)
+                {
+                    <details class="raw-json">
+                        <summary>JSON</summary>
+                        <JsonView Json="@_documentJson" />
+                    </details>
+                }
+            </article>
+
+            @if (_fields.Any(i => i.Retrievable == false))
+            {
+                <p class="muted">Fields that are not retrievable are left out, as they are from every query.</p>
+            }
+        }
+    };
+
+    private static RenderFragment Flag(bool? value) => __builder =>
+    {
+        switch (value)
+        {
+            case true:
+                <span>✓</span>
+                break;
+            case null:
+                <span class="unset" title="Not set in the definition">–</span>
+                break;
+        }
+    };
+
+    private static string? JoinFields(IEnumerable<string> fields) =>
+        fields.Any() ? string.Join(", ", fields) : null;
+
+    /// <summary>Labelled parts, leaving out the ones the definition does not set.</summary>
+    private static string DescribeParts(params (string Label, string? Value)[] parts) =>
+        string.Join(" · ", parts.Where(i => !string.IsNullOrEmpty(i.Value)).Select(i => $"{i.Label}: {i.Value}"));
+
+    private static string DescribeScoringProfile(Azure.Search.Documents.Indexes.Models.ScoringProfile profile)
+    {
+        var weights = profile.TextWeights?.Weights is { Count: > 0 } textWeights
+            ? string.Join(", ", textWeights.Select(i => $"{i.Key} ×{i.Value:0.##}"))
+            : null;
+
+        var functions = profile.Functions.Count > 0
+            ? string.Join(", ", profile.Functions.Select(i => $"{i.GetType().Name.Replace("ScoringFunction", "").ToLowerInvariant()}({i.FieldName})"))
+            : null;
+
+        var described = DescribeParts(("weights", weights), ("functions", functions));
+
+        return described.Length > 0 ? described : "No weights or functions";
+    }
+}

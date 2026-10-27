@@ -1,10 +1,11 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Nodes;
 using AzureSearchEmulator.Indexing;
 using AzureSearchEmulator.Models;
 using AzureSearchEmulator.Repositories;
 using AzureSearchEmulator.SearchData;
+using AzureSearchEmulator.Searching;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.OData.Query;
 using Microsoft.AspNetCore.OData.Routing.Controllers;
 
 namespace AzureSearchEmulator.Controllers;
@@ -17,38 +18,61 @@ public class IndexesController(
     IIndexResolver indexResolver,
     ILuceneDirectoryFactory luceneDirectoryFactory,
     ILuceneIndexReaderFactory luceneIndexReaderFactory,
-    ILuceneIndexWriterFactory luceneIndexWriterFactory)
+    ILuceneIndexWriterFactory luceneIndexWriterFactory,
+    IIndexSearcher indexSearcher)
     : ODataController
 {
     /// <remarks>
-    /// This one still serializes through OData, so the properties held in
-    /// <see cref="SearchIndex.AdditionalProperties"/> do not appear in the listing — see
-    /// <see cref="IndexJson"/> for why the single-index responses had to leave OData to keep
-    /// them. Moving this endpoint too would mean hand-writing the <c>value</c> wrapper the
-    /// Azure Search SDK expects and dropping <c>[EnableQuery]</c>, so it is left as-is: a
-    /// listing is a survey rather than the definition a client edits and writes back, and the
-    /// round-trip that issue #41 is about goes through the single-index routes.
+    /// Serialized the same way as the single-index responses (see <see cref="IndexJson"/>)
+    /// rather than through OData. OData's serializer left out the properties held in
+    /// <see cref="SearchIndex.AdditionalProperties"/>, such as semantic configurations, and wrote
+    /// a scoring profile's text weights as an array of empty objects, which
+    /// <c>SearchIndexClient.GetIndexesAsync</c> cannot read — so listing any index with a
+    /// weighted scoring profile failed in the SDK (found building the index pages, issue #91).
     /// <para>
-    /// Materialized into a queryable rather than returned as the repository's async stream:
-    /// <c>[EnableQuery]</c> does not recognise an <see cref="IAsyncEnumerable{T}"/> as a
-    /// collection, and applied <c>$select</c> to the stream as though it were a single index —
-    /// which threw, so <c>SearchIndexClient.GetIndexNamesAsync</c>, which sends
-    /// <c>$select=name</c>, failed against the emulator.
+    /// <c>$select</c> is the only query option Azure documents for this listing, and it names
+    /// top-level properties, so it is applied here by hand. <c>SearchIndexClient.GetIndexNamesAsync</c>
+    /// sends <c>$select=name</c>.
     /// </para>
     /// </remarks>
     [HttpGet]
-    [EnableQuery]
     [Route("indexes")]
-    public async Task<IQueryable<SearchIndex>> Get()
+    public async Task<IActionResult> List([FromQuery(Name = "$select")] string? select)
     {
-        var indexes = new List<SearchIndex>();
+        var properties = string.IsNullOrWhiteSpace(select) || select.Trim() == "*"
+            ? null
+            : select.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .ToHashSet(StringComparer.Ordinal);
+
+        var value = new JsonArray();
 
         await foreach (var index in searchIndexRepository.GetAll())
         {
-            indexes.Add(index);
+            var node = JsonSerializer.SerializeToNode(index, jsonSerializerOptions)!.AsObject();
+
+            if (properties is not null)
+            {
+                foreach (var name in node.Select(i => i.Key).Where(i => !properties.Contains(i)).ToList())
+                {
+                    node.Remove(name);
+                }
+            }
+
+            value.Add(node);
         }
 
-        return indexes.AsQueryable();
+        var response = new JsonObject
+        {
+            ["@odata.context"] = $"{Request.Scheme}://{Request.Host}{Request.PathBase}/$metadata#indexes",
+            ["value"] = value
+        };
+
+        return new ContentResult
+        {
+            Content = response.ToJsonString(jsonSerializerOptions),
+            ContentType = "application/json",
+            StatusCode = StatusCodes.Status200OK
+        };
     }
 
     /// <remarks>
@@ -221,6 +245,50 @@ public class IndexesController(
         luceneDirectoryFactory.ClearCachedDirectory(index.Name);
 
         return IndexJson(index);
+    }
+
+    /// <summary>
+    /// Azure's index statistics (issue #91): the document count and the bytes the index occupies.
+    /// </summary>
+    /// <remarks>
+    /// <c>storageSize</c> is the size of the index's Lucene files, which is what the emulator
+    /// actually stores; Azure's figure comes from its own storage format, so the two are not
+    /// comparable beyond showing how an index grows. Vectors are stored in the same Lucene files
+    /// rather than in a separate vector index, so <c>vectorIndexSize</c> is always <c>0</c>.
+    /// <para>
+    /// Takes an index name only, not an alias, like deletion: statistics describe one physical
+    /// index.
+    /// </para>
+    /// </remarks>
+    [HttpGet]
+    [Route("indexes({key})/search.stats")]
+    [Route("indexes/{key}/stats")]
+    public async Task<IActionResult> GetStatistics(string key)
+    {
+        // Strip quotes that may be captured from OData-style URLs
+        key = key.Trim('\'');
+
+        var index = await searchIndexRepository.Get(key);
+
+        if (index == null)
+        {
+            return NotFound();
+        }
+
+        var statistics = new JsonObject
+        {
+            ["@odata.context"] = $"{Request.Scheme}://{Request.Host}{Request.PathBase}/$metadata#Microsoft.Azure.Search.V2024_07_01.IndexStatistics",
+            ["documentCount"] = await indexSearcher.GetDocCount(index),
+            ["storageSize"] = LuceneStorage.GetSize(luceneDirectoryFactory.GetDirectory(index.Name)),
+            ["vectorIndexSize"] = 0L
+        };
+
+        return new ContentResult
+        {
+            Content = statistics.ToJsonString(),
+            ContentType = "application/json",
+            StatusCode = StatusCodes.Status200OK
+        };
     }
 
     /// <remarks>

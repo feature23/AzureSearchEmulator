@@ -127,22 +127,17 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
     }
 
     /// <summary>
-    /// Documents a known gap rather than a guarantee: the collection listing still serializes
-    /// through OData, which emits only what the EDM model declares, so the properties preserved
-    /// through the extension bag are absent there.
+    /// The collection listing carries the same definition as the individual route, including the
+    /// properties preserved through the extension bag.
     /// </summary>
     /// <remarks>
-    /// Asserted so the boundary is explicit and a future change to the listing endpoint is a
-    /// deliberate decision rather than a silent one. If this test starts failing because the
-    /// properties now appear, that is an improvement — update the test.
-    ///
-    /// The gap has narrowed twice: <c>scoringProfiles</c> was listed here until issue #47 made
-    /// it a modelled property, and <c>vectorSearch</c> until issue #46 did the same. In both
-    /// cases the EDM model began emitting it and it moved to the assertions below. Anything
-    /// still named here is genuinely unmodelled.
+    /// This used to document a gap: the listing serialized through OData, which emits only what
+    /// the EDM model declares, so <c>corsOptions</c> and the like were missing from it. It moved
+    /// to the same serializer as the individual route in issue #91, after the SDK's
+    /// <c>GetIndexesAsync</c> was found failing on OData's rendering of text weights.
     /// </remarks>
     [Fact]
-    public async Task ListEndpoint_DoesNotYetIncludeUnmodelledProperties()
+    public async Task ListEndpoint_IncludesTheFullDefinition()
     {
         const string indexName = "test-roundtrip-listing";
         var client = await CreateClientAsync();
@@ -156,15 +151,7 @@ public class IndexRoundTripIntegrationTests(EmulatorFactory factory)
             .FirstOrDefault(i => i?["name"]?.GetValue<string>() == indexName);
 
         Assert.NotNull(listed);
-        Assert.Null(listed["corsOptions"]);
-
-        // Modelled since issues #47 and #46, so the listing carries them like any other
-        // declared property.
-        Assert.NotNull(listed["scoringProfiles"]);
-        Assert.NotNull(listed["vectorSearch"]);
-
-        // The individual route is the one that carries the full definition.
-        Assert.NotNull((await GetIndexAsync(client, indexName))["corsOptions"]);
+        Assert.True(JsonNode.DeepEquals(await GetIndexAsync(client, indexName), listed));
 
         await DeleteIndexAsync(client, indexName);
     }

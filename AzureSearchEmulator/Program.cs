@@ -163,7 +163,7 @@ builder.Services.AddHealthChecks()
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<EmulatorStatusService>();
 
-// The search page's SDK clients, which call back into this process over loopback (issue #92).
+// The dashboard pages' SDK clients, which call back into this process over loopback (issues #91 and #92).
 builder.Services.AddSingleton<EmulatorClientFactory>();
 
 // The dashboard (issue #90). Blazor rather than a separate SPA so the whole UI ships inside the
