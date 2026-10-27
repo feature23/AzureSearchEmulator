@@ -849,7 +849,10 @@ public class LuceneNetIndexSearcher(
             return null;
         }
 
-        if (request.Search == null)
+        // A wildcard needs no field to search, so an index without searchable fields can still be
+        // listed with one — as the SDK's SearchAsync("*") and the dashboard's document pager do
+        // (issue #91).
+        if (request.Search is null or "*" or "*:*")
         {
             return new MatchAllDocsQuery();
         }

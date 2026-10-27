@@ -59,6 +59,45 @@ public class DashboardIntegrationTests(EmulatorFactory factory)
         Assert.Contains("href=\"search\" class=\"topnav-link active\"", html);
     }
 
+    /// <remarks>
+    /// Like the search page, the index pages render only once their circuit connects (issue #91).
+    /// They live under <c>/browse</c> because <c>/indexes</c> and <c>/indexes/{name}</c> are the
+    /// API's own routes.
+    /// </remarks>
+    [Theory]
+    [InlineData("/browse")]
+    [InlineData("/browse/test-dashboard-any")]
+    public async Task Indexes_ServesThePage(string path)
+    {
+        await factory.WaitUntilServingAsync();
+        using var client = factory.CreateHttpClient();
+
+        var response = await client.GetAsync(path, TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+
+        var html = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains("href=\"browse\" class=\"topnav-link active\"", html);
+    }
+
+    /// <remarks>
+    /// The other half of the pair: adding pages about indexes must leave the API's index listing
+    /// answering with JSON.
+    /// </remarks>
+    [Fact]
+    public async Task IndexesApi_StillAnswersWithJson()
+    {
+        await factory.WaitUntilServingAsync();
+        using var client = factory.CreateHttpClient();
+
+        var response = await client.GetAsync("/indexes", TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+    }
+
     [Fact]
     public async Task Dashboard_StylesheetIsServed()
     {

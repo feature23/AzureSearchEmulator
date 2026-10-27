@@ -1,0 +1,169 @@
+@page "/browse"
+@using Azure
+@using AzureSearchEmulator.Dashboard
+@using Azure.Search.Documents.Indexes.Models
+@using SdkSearchIndex = Azure.Search.Documents.Indexes.Models.SearchIndex
+@* Not prerendered, for the same reason as the search page: every load goes through the SDK. *@
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
+@inject EmulatorClientFactory Clients
+
+<PageTitle>Indexes · Azure Search Emulator</PageTitle>
+
+<h1 class="visually-hidden">Indexes</h1>
+
+@if (_loadError is not null)
+{
+    <section class="panel is-unhealthy">
+        <h2>Could not list indexes</h2>
+        <p class="error-text">@_loadError</p>
+    </section>
+}
+else if (_indexes is null)
+{
+    <section class="panel panel-loading" aria-busy="true">
+        <span class="spinner" aria-hidden="true"></span>
+        <p class="muted">Loading indexes…</p>
+    </section>
+}
+else if (_indexes.Count == 0)
+{
+    <section class="panel empty-state">
+        <h2>No indexes yet</h2>
+        <p class="muted">
+            Create an index through the REST API or an Azure SDK client pointed at this emulator, and
+            it will be listed here.
+        </p>
+    </section>
+}
+else
+{
+    <section class="panel">
+        <div class="panel-head">
+            <h2>Indexes <span class="tab-count">@_indexes.Count</span></h2>
+        </div>
+
+        <ul class="index-list">
+            @foreach (var index in _indexes)
+            {
+                <li class="index-row">
+                    <div class="index-row-body">
+                        <a class="index-name link" href="@IndexLink(index.Definition.Name)">@index.Definition.Name</a>
+                        <p class="muted">
+                            @index.Definition.Fields.Count @(index.Definition.Fields.Count == 1 ? "field" : "fields")
+                            @if (IndexSchema.KeyField(index.Definition) is { } key)
+                            {
+                                <span> · key <code>@key</code></span>
+                            }
+                        </p>
+                        @if (Features(index.Definition) is { Count: > 0 } features)
+                        {
+                            <ul class="chips">
+                                @foreach (var feature in features)
+                                {
+                                    <li class="chip chip-plain">@feature</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                    <div class="index-row-side">
+                        @if (index.Statistics is { } statistics)
+                        {
+                            <p class="index-count">
+                                <strong>@statistics.DocumentCount.ToString("N0")</strong>
+                                <span class="muted">@(statistics.DocumentCount == 1 ? "document" : "documents")</span>
+                            </p>
+                            <p class="index-count" title="@statistics.StorageSize.ToString("N0") bytes on disk">
+                                <strong>@ByteSize.Format(statistics.StorageSize)</strong>
+                                <span class="muted">on disk</span>
+                            </p>
+                        }
+                        else
+                        {
+                            <p class="muted">Statistics unavailable</p>
+                        }
+                        <a class="button" href="@SearchLink(index.Definition.Name)">Search</a>
+                    </div>
+                </li>
+            }
+        </ul>
+    </section>
+}
+
+@code {
+    private sealed record IndexSummary(SdkSearchIndex Definition, SearchIndexStatistics? Statistics);
+
+    private IReadOnlyList<IndexSummary>? _indexes;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var definitions = new List<SdkSearchIndex>();
+
+        try
+        {
+            await foreach (var index in Clients.CreateIndexClient().GetIndexesAsync())
+            {
+                definitions.Add(index);
+            }
+        }
+        catch (Exception ex) when (ex is RequestFailedException or HttpRequestException or InvalidOperationException)
+        {
+            _loadError = ex.Message;
+            return;
+        }
+
+        var summaries = await Task.WhenAll(definitions
+            .OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(async i => new IndexSummary(i, await GetStatisticsAsync(i.Name))));
+
+        _indexes = summaries;
+    }
+
+    /// <remarks>
+    /// Statistics that fail leave the rest of the list standing: the definitions are already in
+    /// hand, and one broken index should not hide the others.
+    /// </remarks>
+    private async Task<SearchIndexStatistics?> GetStatisticsAsync(string indexName)
+    {
+        try
+        {
+            return (await Clients.CreateIndexClient().GetIndexStatisticsAsync(indexName)).Value;
+        }
+        catch (Exception ex) when (ex is RequestFailedException or HttpRequestException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The optional parts of the definition the index makes use of.</summary>
+    private static List<string> Features(SdkSearchIndex index)
+    {
+        var features = new List<string>();
+
+        if (index.ScoringProfiles.Count > 0)
+        {
+            features.Add("Scoring profiles");
+        }
+
+        if (index.Suggesters.Count > 0)
+        {
+            features.Add("Suggesters");
+        }
+
+        if (index.SemanticSearch?.Configurations.Count > 0)
+        {
+            features.Add("Semantic");
+        }
+
+        if (index.VectorSearch?.Profiles.Count > 0)
+        {
+            features.Add("Vector");
+        }
+
+        return features;
+    }
+
+    private static string IndexLink(string name) => $"browse/{Uri.EscapeDataString(name)}";
+
+    private static string SearchLink(string name) => $"search?index={Uri.EscapeDataString(name)}";
+}

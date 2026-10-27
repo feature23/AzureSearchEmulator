@@ -8,8 +8,8 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 namespace AzureSearchEmulator.Dashboard;
 
 /// <summary>
-/// Creates Azure SDK clients that talk to this emulator, for the dashboard's search page
-/// (issue #92).
+/// Creates Azure SDK clients that talk to this emulator, for the dashboard's search and index pages
+/// (issues #91 and #92).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -58,8 +58,8 @@ public sealed class EmulatorClientFactory : IDisposable
     /// </summary>
     private static Uri SdkEndpoint { get; } = new("https://localhost");
 
-    public SearchIndexClient CreateIndexClient() =>
-        new(SdkEndpoint, Credential, CreateOptions(null));
+    public SearchIndexClient CreateIndexClient(HttpExchangeRecorder? recorder = null) =>
+        new(SdkEndpoint, Credential, CreateOptions(recorder));
 
     /// <param name="indexName">The index (or alias) to query.</param>
     /// <param name="recorder">

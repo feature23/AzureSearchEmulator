@@ -1,5 +1,4 @@
 @page "/search"
-@using System.Text.Json
 @using Azure
 @using Azure.Search.Documents.Models
 @using AzureSearchEmulator.Dashboard
@@ -149,9 +148,9 @@ else
 
     @if (_exchange is not null || _error is not null)
     {
-        <section class="panel results-panel" aria-busy="@_searching">
+        <section class="panel results-panel" aria-busy="@(_searching ? "true" : "false")">
             <div class="tabs" role="tablist">
-                <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Results)"
+                <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Results ? "true" : "false")"
                         @onclick="() => _tab = ResultsTab.Results">
                     Results
                     @if (_results is not null)
@@ -161,11 +160,11 @@ else
                 </button>
                 @if (_exchange is not null)
                 {
-                    <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Request)"
+                    <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Request ? "true" : "false")"
                             @onclick="() => _tab = ResultsTab.Request">
                         Request
                     </button>
-                    <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Response)"
+                    <button type="button" role="tab" class="tab" aria-selected="@(_tab == ResultsTab.Response ? "true" : "false")"
                             @onclick="() => _tab = ResultsTab.Response">
                         Response
                         @if (_exchange.Response is { } response)
@@ -367,7 +366,7 @@ else
         catch (RequestFailedException ex)
         {
             _results = null;
-            _error = ErrorMessage(recorder.LastExchange) ?? ex.Message;
+            _error = ErrorEnvelope.Message(recorder.LastExchange) ?? ex.Message;
         }
         catch (HttpRequestException ex)
         {
@@ -396,33 +395,6 @@ else
         if (address != Navigation.Uri)
         {
             Navigation.NavigateTo(address, replace: true);
-        }
-    }
-
-    /// <summary>
-    /// The message from the emulator's error envelope. The SDK's own exception message appends the
-    /// status, headers and raw content, all of which the Response tab already shows properly.
-    /// </summary>
-    private static string? ErrorMessage(HttpExchange? exchange)
-    {
-        if (exchange?.Response?.Body is not { Length: > 0 } body)
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(body);
-
-            return document.RootElement.TryGetProperty("error", out var error)
-                   && error.TryGetProperty("message", out var message)
-                   && message.ValueKind == JsonValueKind.String
-                ? message.GetString()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 

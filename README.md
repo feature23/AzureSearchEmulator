@@ -83,6 +83,10 @@ dashboard showing whether the emulator is running correctly: the version and env
 running as, how long it has been up, where it is storing indexes, and the result of each health
 check. It refreshes on its own every few seconds.
 
+The **Indexes** page lists every index with its document count and size on disk. Open one to see its
+fields and their attributes, its scoring profiles, suggesters, semantic and vector configuration,
+and its full JSON definition, or to step through its documents one at a time or look one up by key.
+
 The **Search** page queries any index through the Azure SDK, with the usual options &mdash; query type,
 `$filter`, `$orderby`, `$select`, facets, highlighting, scoring profiles and semantic configurations
 &mdash; and shows the results alongside the exact request the SDK sent and the response it got back.

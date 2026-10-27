@@ -52,6 +52,32 @@ public class LuceneNetIndexSearcherTests : IDisposable
         Assert.Equal(5, response.Results.Count);
     }
 
+    /// <remarks>
+    /// A wildcard matches every document whether or not the index has a field to search. It used
+    /// to fail with "no searchable fields", which the SDK's <c>SearchAsync("*")</c> and the
+    /// dashboard's document pager both ran into (issue #91).
+    /// </remarks>
+    [Theory]
+    [InlineData("simple", "*")]
+    [InlineData("full", "*")]
+    [InlineData("full", "*:*")]
+    public async Task Search_Wildcard_OnAnIndexWithNoSearchableFields_ReturnsAllDocuments(string queryType, string search)
+    {
+        var index = LuceneTestHelper.CreateCityIndex();
+
+        foreach (var field in index.Fields)
+        {
+            field.Searchable = false;
+        }
+
+        using var helper = new LuceneTestHelper(index, LuceneTestHelper.CreateCityDocuments());
+        var searcher = new LuceneNetIndexSearcher(new StubIndexReaderFactory(helper.Directory));
+
+        var response = await searcher.Search(index, new SearchRequest { Search = search, QueryType = queryType, Top = 50 });
+
+        Assert.Equal(6, response.Results.Count);
+    }
+
     [Fact]
     public async Task Search_SimpleTextQuery_ReturnsMatchingDocuments()
     {
