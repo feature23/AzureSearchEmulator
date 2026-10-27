@@ -1,5 +1,4 @@
-﻿using System.Xml.Linq;
-using F23.Aspire.Hosting.AzureSearchEmulator;
+﻿using F23.Aspire.Hosting.AzureSearchEmulator;
 
 namespace AzureSearchEmulator.Aspire.Tests;
 
@@ -28,17 +27,10 @@ public class AzureSearchEmulatorResourceTests
         // a second place to edit at release time; this asserts that derivation stays correct.
 
         // Arrange
-        // Read the version the package actually ships from the csproj, rather than from the
+        // Read the version the package actually ships from the VERSION file, rather than from the
         // assembly the tag is already derived from -- comparing the derivation against its own
         // input would pass no matter what the release version is.
-        var csproj = Path.Combine(GetRepositoryRoot(),
-            "AzureSearchEmulator.Aspire", "AzureSearchEmulator.Aspire.csproj");
-
-        var packageVersion = XDocument.Load(csproj)
-            .Descendants("Version")
-            .Single()
-            .Value
-            .Trim();
+        var packageVersion = File.ReadAllText(Path.Combine(GetRepositoryRoot(), "VERSION")).Trim();
 
         // Act
         var tag = AzureSearchEmulatorResource.ImageTag;

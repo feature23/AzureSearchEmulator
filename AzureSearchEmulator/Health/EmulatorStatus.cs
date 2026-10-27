@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace AzureSearchEmulator.Health;
@@ -40,8 +39,6 @@ public class EmulatorStatusService(
     Microsoft.Extensions.Options.IOptions<EmulatorOptions> options,
     TimeProvider timeProvider)
 {
-    private static readonly string AssemblyVersion = GetAssemblyVersion();
-
     private static readonly long StartedAtTimestamp = System.Diagnostics.Stopwatch.GetTimestamp();
 
     public async Task<EmulatorStatus> GetStatusAsync(CancellationToken cancellationToken = default)
@@ -64,28 +61,10 @@ public class EmulatorStatusService(
             report.Status,
             report.TotalDuration,
             entries,
-            AssemblyVersion,
+            EmulatorVersion.Current,
             hostEnvironment.EnvironmentName,
             options.Value.IndexesDirectory,
             System.Diagnostics.Stopwatch.GetElapsedTime(StartedAtTimestamp),
             timeProvider.GetUtcNow());
-    }
-
-    private static string GetAssemblyVersion()
-    {
-        var assembly = typeof(EmulatorStatusService).Assembly;
-
-        var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion;
-
-        if (!string.IsNullOrEmpty(informational))
-        {
-            // The informational version carries a "+<commit sha>" suffix when the build has source
-            // link enabled; the dashboard wants the version, not the provenance.
-            var plus = informational.IndexOf('+');
-            return plus < 0 ? informational : informational[..plus];
-        }
-
-        return assembly.GetName().Version?.ToString() ?? "unknown";
     }
 }

@@ -5,6 +5,7 @@ EXPOSE 443
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+COPY ["VERSION", "Directory.Build.props", "./"]
 COPY ["AzureSearchEmulator/AzureSearchEmulator.csproj", "AzureSearchEmulator/"]
 RUN dotnet restore "AzureSearchEmulator/AzureSearchEmulator.csproj"
 COPY . .
