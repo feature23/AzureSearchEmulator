@@ -50,4 +50,16 @@
 	  <None Include="README.md" Pack="true" PackagePath="\" />
 	</ItemGroup>
 
+	<!-- ONNX Runtime ships native binaries for iOS and Android alongside the desktop and server ones,
+	     and a framework-dependent publish copies every one of them. The emulator cannot run on either
+	     mobile platform, and those two files alone added over 110 MB to the tool package. Dropped
+	     from the publish output, which is also what `dotnet pack` packs for a tool. -->
+	<Target Name="ExcludeMobileNativeRuntimes" AfterTargets="ComputeResolvedFilesToPublishList">
+		<ItemGroup>
+			<ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+				Condition="$([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Replace('\', '/').StartsWith('runtimes/ios/'))
+					Or $([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Replace('\', '/').StartsWith('runtimes/android/'))" />
+		</ItemGroup>
+	</Target>
+
 </Project>
