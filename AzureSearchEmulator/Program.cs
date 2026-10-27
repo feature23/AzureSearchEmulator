@@ -176,6 +176,10 @@ builder.Services.AddRazorComponents()
 
 var app = builder.Build();
 
+// Logged first so the version is on screen before anything else, including a failure to start
+// (issue #89).
+app.Logger.LogInformation("Azure Search Emulator {Version}", EmulatorVersion.Current);
+
 // Outermost, so it also covers the model binding and OData formatter work that runs before a
 // controller action is reached (issue #40).
 //

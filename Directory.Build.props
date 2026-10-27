@@ -1,0 +1,10 @@
+<Project>
+
+    <!-- The single release version for every artifact: the emulator tool package, the Aspire
+         hosting package, and (via the git tag) the container image. The Aspire package pins its
+         image tag to its own version, so these must never drift apart. -->
+    <PropertyGroup>
+        <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</Version>
+    </PropertyGroup>
+
+</Project>
